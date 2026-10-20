@@ -1,4 +1,5 @@
 import os from "node:os";
+import { applyClaim, applyGame, applyRelease, emptyRoom, linksForHost, view } from "./logic.js";
 
 function lanAddresses() {
   const found = [];
@@ -51,32 +52,22 @@ function send(res, status, body) {
 }
 
 export function createRoom() {
-  let hostToken = null;
-  let hostStamp = 0;
-  let revision = 0;
-  let lastSeq = 0;
-  let game = null;
+  let room = emptyRoom();
   const clients = new Set();
 
-  function snapshot() {
-    return { revision, hostStamp, game };
-  }
-
   function publish() {
-    const payload = `data: ${JSON.stringify(snapshot())}\n\n`;
+    const payload = `data: ${JSON.stringify({ revision: room.revision, hostStamp: room.hostStamp, game: room.game })}\n\n`;
     for (const res of clients) res.write(payload);
   }
 
   function links(req) {
-    const port = req.socket.localPort;
-    return lanAddresses().map((ip) => `http://${ip}:${port}/?play=1`);
+    const host = req.headers["x-forwarded-host"] || req.headers.host || "";
+    const proto = req.headers["x-forwarded-proto"] || "http";
+    return linksForHost(host, proto, req.socket?.localPort, lanAddresses());
   }
 
-  function sessionFor(token, req) {
-    let role = "open";
-    if (hostToken && token === hostToken) role = "host";
-    else if (hostToken) role = "guest";
-    return { role, revision, hostStamp, game, links: links(req) };
+  function answer(req, token) {
+    return view(room, token, links(req), true);
   }
 
   async function handle(req, res, next) {
@@ -89,65 +80,53 @@ export function createRoom() {
     try {
       if (req.method === "GET" && url.pathname === "/api/session") {
         const token = String(req.headers["x-banker-token"] || "");
-        send(res, 200, sessionFor(token, req));
+        send(res, 200, answer(req, token));
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/claim") {
         const body = await readBody(req);
-        const token = body.token;
-        if (!token || typeof token !== "string") {
-          send(res, 400, { error: "Missing token" });
+        const result = applyClaim(room, { token: body.token, takeover: body.takeover === true });
+        if (result.error) {
+          send(res, result.status, { error: result.error });
           return;
         }
-        const canTake = !hostToken || hostToken === token || (body.takeover === true && !game);
-        if (!canTake) {
-          send(res, 200, sessionFor(token, req));
-          return;
-        }
-        hostToken = token;
-        hostStamp += 1;
-        lastSeq = 0;
-        publish();
-        send(res, 200, sessionFor(token, req));
+        room = result.room;
+        if (result.changed) publish();
+        send(res, 200, answer(req, body.token || ""));
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/release") {
         const body = await readBody(req);
-        if (body.token && body.token === hostToken) {
-          hostToken = null;
-          hostStamp += 1;
-          publish();
-        }
-        send(res, 200, { ok: true, ...sessionFor("", req) });
+        const result = applyRelease(room, body.token);
+        room = result.room;
+        if (result.changed) publish();
+        send(res, 200, { ok: true, ...answer(req, "") });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/game") {
         const token = String(req.headers["x-banker-token"] || "");
-        if (!hostToken && token) hostToken = token;
-        if (!token || token !== hostToken) {
-          send(res, 403, { error: "Only the banker can update the game" });
-          return;
-        }
         const body = await readBody(req);
-        if (body.hostStamp !== hostStamp || (Number.isInteger(body.seq) && body.seq < lastSeq)) {
-          send(res, 200, { revision, hostStamp, ignored: true });
+        const result = applyGame(room, {
+          token,
+          hostStamp: body.hostStamp,
+          seq: body.seq,
+          game: body.game,
+        });
+        if (result.error) {
+          send(res, result.status, { error: result.error });
           return;
         }
-        if (Number.isInteger(body.seq)) lastSeq = body.seq;
-        if (body.game === null) {
-          game = null;
-        } else if (body.game && body.game.version === 2 && Array.isArray(body.game.players) && body.game.deeds) {
-          game = { ...body.game, history: [] };
-        } else {
-          send(res, 400, { error: "Invalid game" });
-          return;
-        }
-        revision += 1;
-        publish();
-        send(res, 200, { revision, hostStamp });
+        room = result.room;
+        if (result.changed) publish();
+        send(res, 200, {
+          revision: room.revision,
+          hostStamp: room.hostStamp,
+          ignored: Boolean(result.ignored),
+          unchanged: Boolean(result.unchanged),
+        });
         return;
       }
 
@@ -157,7 +136,7 @@ export function createRoom() {
           "cache-control": "no-cache, no-transform",
           connection: "keep-alive",
         });
-        res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
+        res.write(`data: ${JSON.stringify({ revision: room.revision, hostStamp: room.hostStamp, game: room.game })}\n\n`);
         clients.add(res);
         const ping = setInterval(() => {
           res.write(": ping\n\n");

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GROUPED, GROUP_MAP, buildingLabel, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
+import { withPlayerLinks } from "../game/sync.js";
 import { portfolio, rentQuote, unmortgageCost } from "../game/engine.js";
 import { cents, formatMoney } from "../game/money.js";
 
@@ -19,9 +20,10 @@ function useCashFlash(value) {
 
 export function PhoneLinks() {
   const { links } = useGame();
+  const shown = withPlayerLinks(links);
   const [copied, setCopied] = useState(false);
-  if (!links.length) return null;
-  const link = links[0];
+  if (!shown.length) return null;
+  const link = shown[0];
 
   async function copy() {
     try {
@@ -40,9 +42,9 @@ export function PhoneLinks() {
         Each player opens this link on their own phone, taps their name, and sees their cash and deeds update while you bank.
       </p>
       <p className="mt-2 break-all text-sm font-medium text-ink" data-testid="phone-link">{link}</p>
-      {links.length > 1 && (
+      {shown.length > 1 && (
         <ul className="mt-2 space-y-1">
-          {links.slice(1).map((extra) => (
+          {shown.slice(1).map((extra) => (
             <li key={extra} className="break-all text-sm text-ink/70">{extra}</li>
           ))}
         </ul>

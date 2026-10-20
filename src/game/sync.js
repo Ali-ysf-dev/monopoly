@@ -47,6 +47,13 @@ async function post(path, token, body) {
   return data;
 }
 
+export function withPlayerLinks(links) {
+  if (Array.isArray(links) && links.length) return links;
+  const hostname = location.hostname;
+  if (!hostname || hostname === "localhost" || hostname === "127.0.0.1") return [];
+  return [`${location.origin}/?play=1`];
+}
+
 export function fetchSession(token) {
   return fetch("/api/session", {
     headers: { "x-banker-token": token },
@@ -78,15 +85,54 @@ export function pushGame(token, state, hostStamp) {
 }
 
 export function subscribe(onMessage, onStatus) {
-  const source = new EventSource("/api/events");
-  source.onmessage = (event) => {
+  let stopped = false;
+  let lastKey = "";
+  let source = null;
+
+  function emit(payload) {
+    const key = `${payload.hostStamp}:${payload.revision}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    onMessage({
+      revision: payload.revision,
+      hostStamp: payload.hostStamp,
+      game: payload.game ?? null,
+    });
+  }
+
+  async function tick() {
     try {
-      onMessage(JSON.parse(event.data));
+      const session = await fetchSession(deviceToken());
+      emit(session);
       onStatus?.(true);
+      if (session.stream && !source) {
+        source = new EventSource("/api/events");
+        source.onmessage = (event) => {
+          try {
+            emit(JSON.parse(event.data));
+            onStatus?.(true);
+          } catch {
+            // Ignore a frame that is not the game snapshot.
+          }
+        };
+      }
     } catch {
-      // Ignore a frame that is not the game snapshot.
+      onStatus?.(false);
     }
+  }
+
+  tick();
+  const timer = setInterval(() => {
+    if (!stopped && document.visibilityState !== "hidden") tick();
+  }, 2000);
+  const onVisible = () => {
+    if (!stopped && document.visibilityState !== "hidden") tick();
   };
-  source.onerror = () => onStatus?.(false);
-  return () => source.close();
+  document.addEventListener("visibilitychange", onVisible);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", onVisible);
+    source?.close();
+  };
 }

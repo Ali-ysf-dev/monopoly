@@ -14,6 +14,7 @@ import {
   stripForSync,
   subscribe,
   wantsPlayerView,
+  withPlayerLinks,
 } from "../game/sync.js";
 
 const GameContext = createContext(null);
@@ -62,7 +63,7 @@ export function GameProvider({ children }) {
           const session = await fetchSession(token);
           if (cancelled) return;
           hostStampRef.current = session.hostStamp || 0;
-          setLinks(session.links || []);
+          setLinks(withPlayerLinks(session.links));
           dispatch({ type: "REPLACE", game: session.game });
           setLive(true);
           setRole("player");
@@ -72,7 +73,7 @@ export function GameProvider({ children }) {
         const session = await claimHost(token);
         if (cancelled) return;
         hostStampRef.current = session.hostStamp || 0;
-        setLinks(session.links || []);
+        setLinks(withPlayerLinks(session.links));
         if (session.role !== "host") {
           dispatch({ type: "REPLACE", game: session.game });
           setLive(true);
@@ -105,6 +106,7 @@ export function GameProvider({ children }) {
         if (!cancelled) setRole("host");
       } catch {
         if (cancelled) return;
+        setLinks(withPlayerLinks([]));
         setRole(playerView ? "offline-player" : "solo");
       }
     }
@@ -123,7 +125,7 @@ export function GameProvider({ children }) {
         fetchSession(tokenRef.current).then((session) => {
           if (roleRef.current !== "host") return;
           hostStampRef.current = session.hostStamp || 0;
-          setLinks(session.links || []);
+          setLinks(withPlayerLinks(session.links));
           if (session.role !== "host") {
             dispatch({ type: "REPLACE", game: session.game });
             setLive(true);
@@ -167,6 +169,14 @@ export function GameProvider({ children }) {
     }, 40);
     return () => clearTimeout(timer);
   }, [state, role, syncNonce]);
+
+  useEffect(() => {
+    if (role !== "host") return undefined;
+    const timer = setInterval(() => {
+      pushGame(tokenRef.current, stateRef.current, hostStampRef.current).catch(() => {});
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [role]);
 
   const choosePlayer = useCallback((id) => {
     localStorage.setItem(PLAYER_KEY, id);

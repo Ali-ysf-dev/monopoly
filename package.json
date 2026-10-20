@@ -8,9 +8,10 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node src/game/engine.test.js"
+    "test": "node src/game/engine.test.js && node server/logic.test.js"
   },
   "dependencies": {
+    "@vercel/functions": "^3.10.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
