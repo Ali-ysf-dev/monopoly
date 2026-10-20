@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { COLORS, TOKEN_NAMES } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
+import { PhoneLinks } from "./PlayerDashboard.jsx";
 import { Field, fieldClass, GoldButton } from "./ui.jsx";
 
 function makePlayer(index, cash) {
@@ -20,12 +21,11 @@ function wholeDollars(value, max) {
 }
 
 export default function SetupScreen() {
-  const { start } = useGame();
-  const [players, setPlayers] = useState(() => [makePlayer(0, 1500), makePlayer(1, 1500)]);
-  const [defaultCash, setDefaultCash] = useState("1500");
+  const { start, watchAsPlayer } = useGame();
+  const [players, setPlayers] = useState(() => [makePlayer(0, 2500), makePlayer(1, 2500)]);
+  const [defaultCash, setDefaultCash] = useState("2500");
   const [goSalary, setGoSalary] = useState("200");
   const [freeParking, setFreeParking] = useState(false);
-  const [edition, setEdition] = useState("us");
   const [error, setError] = useState("");
 
   const taken = useMemo(() => new Set(players.map((player) => player.color)), [players]);
@@ -36,7 +36,7 @@ export default function SetupScreen() {
       if (next < current.length) return current.slice(0, next);
       const cash = wholeDollars(defaultCash, 1_000_000);
       const extra = Array.from({ length: next - current.length }, (_, index) => (
-        makePlayer(current.length + index, cash ?? 1500)
+        makePlayer(current.length + index, cash ?? 2500)
       ));
       return [...current, ...extra];
     });
@@ -48,7 +48,7 @@ export default function SetupScreen() {
 
   function applyCash() {
     if (wholeDollars(defaultCash, 1_000_000) == null) {
-      setError("Starting cash has to be a whole dollar amount up to $1,000,000.");
+      setError("Starting cash has to be a whole number of pounds, up to £1,000,000.");
       return;
     }
     setError("");
@@ -63,7 +63,7 @@ export default function SetupScreen() {
     event.preventDefault();
     const salary = wholeDollars(goSalary, 10000);
     if (salary == null) {
-      setError("Go salary has to be a whole dollar amount up to $10,000.");
+      setError("Go salary has to be a whole number of pounds, up to £10,000.");
       return;
     }
     const ready = [];
@@ -74,30 +74,33 @@ export default function SetupScreen() {
         return;
       }
       if (cash == null) {
-        setError(`Enter whole-dollar starting cash for ${player.name.trim() || "each player"}.`);
+        setError(`Enter a whole number of pounds for ${player.name.trim() || "each player"}.`);
         return;
       }
       ready.push({ id: player.id, name: player.name.trim(), color: player.color, cash });
     }
-    const result = start({ players: ready, goSalary: salary, freeParking, edition });
+    const result = start({ players: ready, goSalary: salary, freeParking });
     if (!result.ok) setError(result.error);
   }
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col px-4 py-8 sm:px-6">
-      <p className="text-[11px] font-semibold tracking-[0.2em] text-gold uppercase">For the physical board</p>
-      <h1 className="mt-2 font-display text-5xl leading-none text-ivory">Monopoly Banker</h1>
-      <p className="mt-3 max-w-md text-base leading-relaxed text-ivory/75">
-        Choose the players and their starting cash. The banker then handles buys, rent, fees, mortgages, houses, and hotels.
+      <h1 className="text-2xl font-semibold text-ink">Monopoly Banker</h1>
+      <p className="mt-2 max-w-md text-sm leading-relaxed text-ink/70">
+        UK Mega Edition. Each player usually starts with £2,500.
       </p>
+      <PhoneLinks />
+      <button type="button" onClick={watchAsPlayer} className="mt-3 self-start text-sm font-medium text-ink/70 underline-offset-2 hover:underline">
+        This phone is a player, not the banker
+      </button>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-5">
-        <section className="deed rounded-3xl p-4 text-ink">
+        <section className="deed rounded-lg p-4 text-ink">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="font-display text-2xl">Players</h2>
+            <h2 className="text-base font-semibold">Players</h2>
             <div className="flex items-center gap-2">
               <button type="button" aria-label="Fewer players" onClick={() => setCount(Math.max(2, players.length - 1))} className="grid h-11 w-11 place-items-center rounded-full bg-ink text-xl text-ivory">−</button>
-              <span className="w-6 text-center font-display text-2xl tabular-nums">{players.length}</span>
+              <span className="w-6 text-center text-lg font-semibold tabular-nums">{players.length}</span>
               <button type="button" aria-label="More players" onClick={() => setCount(Math.min(8, players.length + 1))} className="grid h-11 w-11 place-items-center rounded-full bg-ink text-xl text-ivory">+</button>
             </div>
           </div>
@@ -109,7 +112,7 @@ export default function SetupScreen() {
               Apply to all
             </button>
           </div>
-          <button type="button" onClick={useTokens} className="mt-3 text-sm font-semibold text-gold-deep underline-offset-2 hover:underline">
+          <button type="button" onClick={useTokens} className="mt-3 text-sm font-medium text-ink underline">
             Use the classic tokens as names
           </button>
 
@@ -159,28 +162,13 @@ export default function SetupScreen() {
           </div>
         </section>
 
-        <section className="deed rounded-3xl p-4 text-ink">
-          <h2 className="font-display text-2xl">Table rules</h2>
+        <section className="deed rounded-lg p-4 text-ink">
+          <h2 className="text-base font-semibold">Table rules</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Field label="Go salary">
               <input className={fieldClass} inputMode="numeric" value={goSalary} onChange={(event) => setGoSalary(event.target.value.replace(/[^\d]/g, "").slice(0, 5))} />
             </Field>
-            <div>
-              <p className="mb-1.5 text-sm font-medium text-ink/70">Board names</p>
-              <div className="grid grid-cols-2 gap-2">
-                {[["us", "US"], ["uk", "UK"]].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={edition === id}
-                    onClick={() => setEdition(id)}
-                    className={`min-h-12 rounded-xl text-sm font-semibold ${edition === id ? "bg-ink text-ivory" : "bg-white text-ink"}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <p className="self-end pb-3 text-sm text-ink/60">The board is the UK Mega Edition: 30 streets, 4 stations, and 3 utilities.</p>
           </div>
           <label className="mt-4 flex items-start gap-3 text-sm leading-snug">
             <input type="checkbox" className="mt-1 h-4 w-4" checked={freeParking} onChange={(event) => setFreeParking(event.target.checked)} />

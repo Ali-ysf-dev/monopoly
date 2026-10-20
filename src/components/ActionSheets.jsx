@@ -50,8 +50,8 @@ export function PaySheet({ onClose }) {
     >
       <PlayerChips players={solvent} value={payer?.id} onChange={(id) => { setPayerId(id); setActive(id); }} />
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-ink" onClick={() => { setAmount("100"); setNote("Luxury tax"); }}>Luxury tax $100</button>
-        <button type="button" className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-ink" onClick={() => { setAmount("200"); setNote("Income tax"); }}>Income tax $200</button>
+        <button type="button" className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-ink" onClick={() => { setAmount("100"); setNote("Bank deposit"); }}>Bank deposit £100</button>
+        <button type="button" className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-ink" onClick={() => { setAmount("200"); setNote("Income tax"); }}>Income tax £200</button>
         <button
           type="button"
           disabled={!payer}
@@ -69,7 +69,7 @@ export function PaySheet({ onClose }) {
       </div>
       <label className="mt-4 block text-sm text-ink/70">
         Note
-        <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Luxury tax, fine, fee" className="mt-1 w-full rounded-xl bg-white px-3 py-3 text-base text-ink" />
+        <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Bank deposit, fine, fee" className="mt-1 w-full rounded-xl bg-white px-3 py-3 text-base text-ink" />
       </label>
       {state.settings.freeParking && (
         <label className="mt-3 flex items-center gap-2 text-sm text-ink/80">
@@ -189,13 +189,13 @@ export function RentSheet({ onClose }) {
       const deed = state.deeds[prop.id];
       if (!deed.ownerId) return false;
       if (!text) return true;
-      return `${prop.name} ${prop.nameUk}`.toLowerCase().includes(text);
+      return prop.name.toLowerCase().includes(text);
     });
   }, [query, state.deeds]);
 
   return (
     <Sheet
-      title={selected ? propName(selected, state.edition) : "Charge rent"}
+      title={selected ? propName(selected) : "Charge rent"}
       kicker="Rent"
       onClose={onClose}
       footer={selected && payer ? (
@@ -231,7 +231,6 @@ export function RentSheet({ onClose }) {
                 prop={prop}
                 deed={state.deeds[prop.id]}
                 owner={state.players.find((player) => player.id === state.deeds[prop.id].ownerId)}
-                edition={state.edition}
                 disabled={state.deeds[prop.id].mortgaged}
                 onClick={() => setSelectedId(prop.id)}
               />
@@ -284,7 +283,6 @@ export function AuctionSheet({ propId, onClose, onPick }) {
               prop={item}
               deed={state.deeds[item.id]}
               owner={null}
-              edition={state.edition}
               onClick={() => onPick(item.id)}
             />
           ))}
@@ -308,7 +306,7 @@ export function AuctionSheet({ propId, onClose, onPick }) {
 
   return (
     <Sheet
-      title={propName(prop, state.edition)}
+      title={propName(prop)}
       kicker={`Auction · printed price ${formatMoney(cents(prop.price))}`}
       onClose={onClose}
       footer={(
@@ -343,7 +341,7 @@ export function AuctionSheet({ propId, onClose, onPick }) {
                 value={bids[player.id] || ""}
                 placeholder="0"
                 onChange={(event) => setBids((current) => ({ ...current, [player.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 7) }))}
-                className="h-11 w-full rounded-xl bg-ivory px-3 text-right font-display text-2xl text-ink tabular-nums"
+                className="h-11 w-full rounded-lg border border-ink/15 bg-white px-3 text-right text-xl font-semibold text-ink tabular-nums"
               />
               <button type="button" onClick={() => bump(player.id, 10)} className="h-11 rounded-xl bg-ink px-3 font-semibold text-ivory">+10</button>
             </div>

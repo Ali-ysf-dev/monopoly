@@ -62,12 +62,12 @@ export default function CardsSheet({ onClose, onOpenProperty }) {
       <div className="mt-4 space-y-5">
         {CARDS.map((deck) => (
           <section key={deck.id}>
-            <h3 className="font-display text-2xl text-ink">{deck.label}</h3>
+            <h3 className="text-base font-semibold text-ink">{deck.label}</h3>
             <div className="mt-2 space-y-2">
               {deck.cards.map((card) => {
                 if (card.kind === "nearest-rail" || card.kind === "nearest-util") return null;
                 const repairs = card.kind === "repairs" ? billFor(card) : null;
-                const moveName = card.kind === "move" ? propName(PROPERTIES.find((prop) => prop.id === card.propId), state.edition) : "";
+                const moveName = card.kind === "move" ? propName(PROPERTIES.find((prop) => prop.id === card.propId)) : "";
                 return (
                   <div key={card.id} className="rounded-2xl bg-white px-3 py-3">
                     <p className="font-semibold text-ink">{card.kind === "move" ? `Advance to ${moveName}` : card.title}</p>
@@ -98,7 +98,7 @@ export default function CardsSheet({ onClose, onOpenProperty }) {
           </section>
         ))}
         <section>
-          <h3 className="font-display text-2xl text-ink">Nearest railroad</h3>
+          <h3 className="text-base font-semibold text-ink">Nearest station</h3>
           <label className="mt-2 flex items-center gap-2 text-sm text-ink/80">
             <input type="checkbox" checked={Boolean(passed.rail)} onChange={(event) => setPassed((current) => ({ ...current, rail: event.target.checked }))} />
             Also collect Go salary
@@ -106,17 +106,17 @@ export default function CardsSheet({ onClose, onOpenProperty }) {
           <div className="mt-2 grid grid-cols-2 gap-2">
             {RAILS.map((id) => (
               <button key={id} type="button" onClick={() => openMove(id, "rail", "double-rail")} className="rounded-xl bg-white px-3 py-3 text-left text-sm font-semibold text-ink">
-                {propName(PROPERTIES.find((prop) => prop.id === id), state.edition)}
+                {propName(PROPERTIES.find((prop) => prop.id === id))}
               </button>
             ))}
           </div>
         </section>
         <section>
-          <h3 className="font-display text-2xl text-ink">Nearest utility</h3>
+          <h3 className="text-base font-semibold text-ink">Nearest utility</h3>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {UTILS.map((id) => (
               <button key={id} type="button" onClick={() => openMove(id, "util", "ten-util")} className="rounded-xl bg-white px-3 py-3 text-left text-sm font-semibold text-ink">
-                {propName(PROPERTIES.find((prop) => prop.id === id), state.edition)}
+                {propName(PROPERTIES.find((prop) => prop.id === id))}
               </button>
             ))}
           </div>

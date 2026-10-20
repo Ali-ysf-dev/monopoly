@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
-import { PROPERTIES, PROP_MAP, propName } from "../data/board.js";
+import { PROPERTIES, PROP_MAP, buildingLabel, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
 import { mortgageInterest, trade, tradeError, unmortgageCost } from "../game/engine.js";
 import { formatMoney, parseMoney } from "../game/money.js";
 import { GoldButton, Sheet } from "./ui.jsx";
 
-function Side({ player, deeds, cash, cards, onCash, onToggle, onCards, edition, state }) {
+function Side({ player, deeds, cash, cards, bus, onCash, onToggle, onCards, onBus, state }) {
   const owned = PROPERTIES.filter((prop) => state.deeds[prop.id].ownerId === player.id);
   return (
     <section className="rounded-2xl bg-white/75 p-3">
@@ -23,6 +23,16 @@ function Side({ player, deeds, cash, cards, onCash, onToggle, onCards, edition, 
           className="mt-1 w-full rounded-xl bg-ivory px-3 py-2 text-base text-ink"
         />
       </label>
+      {(player.busTickets || 0) > 0 && (
+        <div className="mt-3 flex items-center justify-between text-sm">
+          <span>Bus tickets ({player.busTickets})</span>
+          <span className="flex items-center gap-2">
+            <button type="button" className="h-8 w-8 rounded-full bg-ink/10" onClick={() => onBus(Math.max(0, bus - 1))}>−</button>
+            {bus}
+            <button type="button" className="h-8 w-8 rounded-full bg-ink/10" onClick={() => onBus(Math.min(player.busTickets, bus + 1))}>+</button>
+          </span>
+        </div>
+      )}
       {player.jailCards > 0 && (
         <div className="mt-3 flex items-center justify-between text-sm">
           <span>Jail cards ({player.jailCards})</span>
@@ -45,9 +55,10 @@ function Side({ player, deeds, cash, cards, onCash, onToggle, onCards, edition, 
               onClick={() => onToggle(prop.id)}
               className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm ${on ? "bg-ink text-ivory" : "bg-ivory text-ink"}`}
             >
-              <span>{propName(prop, edition)}</span>
+              <span>{propName(prop)}</span>
               <span className="text-xs opacity-70">
-                {deed.buildings === 5 ? "Hotel" : deed.buildings > 0 ? `${deed.buildings}h` : ""}
+                {buildingLabel(deed.buildings)}
+                {deed.depot ? " Depot" : ""}
                 {deed.mortgaged ? " M" : ""}
               </span>
             </button>
@@ -71,6 +82,8 @@ export default function TradeSheet({ focusPropId, onClose }) {
   const [rightCash, setRightCash] = useState("");
   const [leftCards, setLeftCards] = useState(0);
   const [rightCards, setRightCards] = useState(0);
+  const [leftBus, setLeftBus] = useState(0);
+  const [rightBus, setRightBus] = useState(0);
   const [plan, setPlan] = useState({});
 
   const left = solvent.find((player) => player.id === leftId);
@@ -86,8 +99,10 @@ export default function TradeSheet({ focusPropId, onClose }) {
     rightCash: rightParsed || 0,
     leftCards,
     rightCards,
+    leftBus,
+    rightBus,
     mortgagePlan: plan,
-  }), [leftId, rightId, leftDeeds, rightDeeds, leftParsed, rightParsed, leftCards, rightCards, plan]);
+  }), [leftId, rightId, leftDeeds, rightDeeds, leftParsed, rightParsed, leftCards, rightCards, leftBus, rightBus, plan]);
   const problem = !left || !right
     ? "Pick two players"
     : leftParsed == null || rightParsed == null
@@ -106,22 +121,26 @@ export default function TradeSheet({ focusPropId, onClose }) {
       setLeftId(id);
       setLeftDeeds(focusPropId && state.deeds[focusPropId].ownerId === id ? [focusPropId] : []);
       setLeftCards(0);
+      setLeftBus(0);
       if (id === rightId) {
         const replacement = solvent.find((player) => player.id !== id);
         setRightId(replacement?.id ?? null);
         setRightDeeds([]);
         setRightCards(0);
+        setRightBus(0);
       }
       return;
     }
     setRightId(id);
     setRightDeeds([]);
     setRightCards(0);
+    setRightBus(0);
     if (id === leftId) {
       const replacement = solvent.find((player) => player.id !== id);
       setLeftId(replacement?.id ?? null);
       setLeftDeeds([]);
       setLeftCards(0);
+      setLeftBus(0);
     }
   }
 
@@ -135,7 +154,7 @@ export default function TradeSheet({ focusPropId, onClose }) {
   return (
     <Sheet
       title="Trade"
-      kicker="Deeds, cash, and jail cards"
+      kicker="Deeds, cash, jail cards, and bus tickets"
       onClose={onClose}
       footer={(
         <div className="space-y-2">
@@ -185,10 +204,11 @@ export default function TradeSheet({ focusPropId, onClose }) {
               deeds={leftDeeds}
               cash={leftCash}
               cards={leftCards}
-              edition={state.edition}
+              bus={leftBus}
               state={state}
               onCash={setLeftCash}
               onCards={setLeftCards}
+              onBus={setLeftBus}
               onToggle={(id) => setLeftDeeds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
             />
             <Side
@@ -196,10 +216,11 @@ export default function TradeSheet({ focusPropId, onClose }) {
               deeds={rightDeeds}
               cash={rightCash}
               cards={rightCards}
-              edition={state.edition}
+              bus={rightBus}
               state={state}
               onCash={setRightCash}
               onCards={setRightCards}
+              onBus={setRightBus}
               onToggle={(id) => setRightDeeds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
             />
           </div>
@@ -209,7 +230,7 @@ export default function TradeSheet({ focusPropId, onClose }) {
           const choice = plan[item.id] === "unmortgage" ? "unmortgage" : "interest";
           return (
             <div key={item.id} className="rounded-2xl bg-rose-50 p-3 text-sm text-ink">
-              <p className="font-semibold">{propName(prop, state.edition)} is mortgaged. {item.to.name} must settle it with the bank.</p>
+              <p className="font-semibold">{propName(prop)} is mortgaged. {item.to.name} must settle it with the bank.</p>
               <div className="mt-2 grid gap-2">
                 <button type="button" onClick={() => setPlan((current) => ({ ...current, [item.id]: "interest" }))} className={`rounded-xl px-3 py-2 text-left ${choice === "interest" ? "bg-ink text-ivory" : "bg-white"}`}>
                   Pay {formatMoney(mortgageInterest(prop))} interest and keep it mortgaged

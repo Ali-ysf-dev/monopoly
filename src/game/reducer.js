@@ -6,6 +6,16 @@ function snapshot(state) {
 export function gameReducer(state, action) {
   if (action.type === "START") return action.game;
   if (action.type === "END") return null;
+  if (action.type === "REPLACE") {
+    if (!action.game) return null;
+    if (action.game.version !== 2 || !Array.isArray(action.game.players) || !action.game.deeds) return state;
+    return {
+      ...action.game,
+      history: [],
+      toast: action.game.toast ?? null,
+      log: action.game.log || [],
+    };
+  }
   if (!state) return state;
 
   if (action.type === "SET_ACTIVE") {

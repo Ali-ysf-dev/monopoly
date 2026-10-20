@@ -1,6 +1,10 @@
 import {
+  BANK_BUS_TICKETS,
+  BANK_DEPOTS,
   BANK_HOTELS,
   BANK_HOUSES,
+  BANK_SKYSCRAPERS,
+  DEPOT_COST,
   GROUP_MAP,
   PROP_MAP,
   PROPERTIES,
@@ -31,6 +35,15 @@ function assertBank(state) {
   if (state.bank.hotels < 0 || state.bank.hotels > BANK_HOTELS) {
     throw new Error("The hotel count does not add up");
   }
+  if (state.bank.skyscrapers < 0 || state.bank.skyscrapers > BANK_SKYSCRAPERS) {
+    throw new Error("The skyscraper count does not add up");
+  }
+  if (state.bank.depots < 0 || state.bank.depots > BANK_DEPOTS) {
+    throw new Error("The train depot count does not add up");
+  }
+  if (state.bank.busTickets < 0 || state.bank.busTickets > BANK_BUS_TICKETS) {
+    throw new Error("The bus ticket count does not add up");
+  }
 }
 
 export function mortgageInterest(prop) {
@@ -52,6 +65,7 @@ export function portfolio(state, playerId) {
     if (deed.ownerId !== playerId) continue;
     deeds += cents(prop.price);
     if (prop.houseCost) buildings += cents(prop.houseCost) * deed.buildings;
+    if (deed.depot) buildings += cents(DEPOT_COST);
     if (deed.mortgaged) mortgages += cents(prop.mortgage);
   }
   const taxable = player.cash + deeds + buildings;
@@ -68,98 +82,143 @@ export function portfolio(state, playerId) {
 export function repairBill(state, playerId, perHouse, perHotel) {
   let houses = 0;
   let hotels = 0;
+  let skyscrapers = 0;
   for (const prop of PROPERTIES) {
     if (prop.type !== "street") continue;
     const deed = state.deeds[prop.id];
     if (deed.ownerId !== playerId) continue;
-    if (deed.buildings === 5) hotels += 1;
+    if (deed.buildings === 6) skyscrapers += 1;
+    else if (deed.buildings === 5) hotels += 1;
     else houses += deed.buildings;
   }
   return {
     houses,
     hotels,
-    amount: cents(perHouse) * houses + cents(perHotel) * hotels,
+    skyscrapers,
+    amount: cents(perHouse) * houses + cents(perHotel) * (hotels + skyscrapers),
   };
 }
 
-// A mortgaged railroad or utility still counts toward the rent level of the others.
-// A mortgaged street collects nothing, but the rest of an undeveloped color set
-// still collects double rent.
+function ownedInGroup(state, groupId, ownerId) {
+  return propsInGroup(groupId).filter((prop) => state.deeds[prop.id].ownerId === ownerId);
+}
+
+// Mega lets you build once you own all but one street in the colour.
+function developer(state, groupId) {
+  const props = propsInGroup(groupId);
+  if (props[0]?.type !== "street") return null;
+  const counts = new Map();
+  for (const prop of props) {
+    const ownerId = state.deeds[prop.id].ownerId;
+    if (!ownerId) continue;
+    counts.set(ownerId, (counts.get(ownerId) || 0) + 1);
+  }
+  for (const [ownerId, count] of counts) {
+    if (count >= props.length - 1) {
+      return {
+        ownerId,
+        complete: count === props.length,
+        props: props.filter((prop) => state.deeds[prop.id].ownerId === ownerId),
+      };
+    }
+  }
+  return null;
+}
+
+function streetLevel(count) {
+  if (count === 6) return "Skyscraper";
+  if (count === 5) return "Hotel";
+  return `${count} house${count === 1 ? "" : "s"}`;
+}
+
+// A mortgaged station or utility still counts toward the rent on the others.
+// Majority of a colour doubles unimproved rent. The whole colour triples it.
+// The Chance utility card stays at 10× even when all three utilities are owned.
 export function rentQuote(state, propId, { dice = 0, doubleRail = false, tenUtil = false } = {}) {
   const prop = PROP_MAP[propId];
-  if (!prop) return { blocked: true, amount: 0, detail: "Unknown property", ownerId: null };
+  if (!prop) return { blocked: true, amount: 0, detail: "Unknown property", ownerId: null, tier: null };
   const deed = state.deeds[propId];
-  if (!deed.ownerId) return { blocked: true, amount: 0, detail: "The bank still owns this", ownerId: null };
+  if (!deed.ownerId) return { blocked: true, amount: 0, detail: "The bank still owns this", ownerId: null, tier: null };
   if (deed.mortgaged) {
-    return { blocked: true, amount: 0, detail: "Mortgaged, so no rent is due", ownerId: deed.ownerId };
+    return { blocked: true, amount: 0, detail: "Mortgaged, so no rent is due", ownerId: deed.ownerId, tier: null };
   }
 
   if (prop.type === "railroad") {
     const owned = PROPERTIES.filter((item) => item.type === "railroad" && state.deeds[item.id].ownerId === deed.ownerId).length;
-    const amount = cents(RAIL_RENT[owned]) * (doubleRail ? 2 : 1);
-    const detail = doubleRail
-      ? `${owned} railroad${owned === 1 ? "" : "s"} · Chance doubles it`
-      : `${owned} railroad${owned === 1 ? "" : "s"}`;
-    return { amount, detail, ownerId: deed.ownerId };
+    const depot = deed.depot ? 2 : 1;
+    const chance = doubleRail ? 2 : 1;
+    const parts = [`${owned} station${owned === 1 ? "" : "s"}`];
+    if (deed.depot) parts.push("train depot doubles it");
+    if (doubleRail) parts.push("Chance doubles it");
+    return {
+      amount: cents(RAIL_RENT[owned] * depot * chance),
+      detail: parts.join(" · "),
+      ownerId: deed.ownerId,
+      tier: null,
+    };
   }
 
   if (prop.type === "utility") {
     const owned = PROPERTIES.filter((item) => item.type === "utility" && state.deeds[item.id].ownerId === deed.ownerId).length;
-    const multiplier = tenUtil || owned >= 2 ? 10 : 4;
+    let multiplier = 4;
+    if (owned >= 2) multiplier = 10;
+    if (owned >= 3) multiplier = 20;
+    if (tenUtil) multiplier = 10;
+    const diceLabel = tenUtil ? "the white dice" : "the white dice";
     if (!dice) {
-      return { needsDice: true, amount: 0, multiplier, detail: `${multiplier}× the dice`, ownerId: deed.ownerId };
+      return { needsDice: true, amount: 0, multiplier, detail: `${multiplier}× ${diceLabel}`, ownerId: deed.ownerId, tier: null };
     }
     if (!Number.isInteger(dice) || dice < 2 || dice > 12) {
-      return { blocked: true, amount: 0, detail: "Enter a dice total from 2 to 12", ownerId: deed.ownerId };
+      return { blocked: true, amount: 0, detail: "Enter the two white dice, from 2 to 12", ownerId: deed.ownerId, tier: null };
     }
     return {
       amount: cents(dice * multiplier),
       detail: `${multiplier}× a roll of ${dice}`,
       ownerId: deed.ownerId,
       multiplier,
+      tier: null,
     };
   }
 
   if (deed.buildings > 0) {
     return {
       amount: cents(prop.rent[deed.buildings]),
-      detail: deed.buildings === 5 ? "Hotel" : `${deed.buildings} house${deed.buildings === 1 ? "" : "s"}`,
+      detail: streetLevel(deed.buildings),
       ownerId: deed.ownerId,
+      tier: deed.buildings,
     };
   }
 
   const group = propsInGroup(prop.group);
-  const monopoly = group.every((item) => state.deeds[item.id].ownerId === deed.ownerId);
-  const improved = group.some((item) => state.deeds[item.id].buildings > 0);
-  if (monopoly && !improved) {
-    return { amount: cents(prop.rent[0] * 2), detail: "Color set owned · rent doubled", ownerId: deed.ownerId };
+  const owned = group.filter((item) => state.deeds[item.id].ownerId === deed.ownerId).length;
+  if (owned === group.length) {
+    return { amount: cents(prop.rent[0] * 3), detail: "Whole colour owned · rent tripled", ownerId: deed.ownerId, tier: "triple" };
   }
-  return { amount: cents(prop.rent[0]), detail: "Base rent", ownerId: deed.ownerId };
-}
-
-function monopolyOwner(state, groupId) {
-  const props = propsInGroup(groupId);
-  const ownerId = state.deeds[props[0].id]?.ownerId;
-  if (!ownerId || props.some((prop) => state.deeds[prop.id].ownerId !== ownerId)) return null;
-  return ownerId;
+  if (owned >= group.length - 1) {
+    return { amount: cents(prop.rent[0] * 2), detail: "Majority of the colour · rent doubled", ownerId: deed.ownerId, tier: "double" };
+  }
+  return { amount: cents(prop.rent[0]), detail: "Base rent", ownerId: deed.ownerId, tier: "base" };
 }
 
 export function buildBlockReason(state, propId) {
   const prop = PROP_MAP[propId];
   const deed = state.deeds[propId];
-  if (!prop || prop.type !== "street") return "Only color sets can take houses";
+  if (!prop || prop.type !== "street") return "Only colour sets can take houses";
   if (!deed.ownerId) return "Buy this deed before building";
-  if (deed.buildings >= 5) return "A hotel is already here";
-  const props = propsInGroup(prop.group);
-  if (props.some((item) => state.deeds[item.id].ownerId !== deed.ownerId)) {
-    return "Own the whole color set before building";
+  if (deed.buildings >= 6) return "A skyscraper is already here";
+  const group = propsInGroup(prop.group);
+  const owned = ownedInGroup(state, prop.group, deed.ownerId);
+  if (owned.length < group.length - 1) return "Own all but one street in this colour before building";
+  if (owned.some((item) => state.deeds[item.id].mortgaged)) {
+    return "Unmortgage your streets in this colour before building";
   }
-  if (props.some((item) => state.deeds[item.id].mortgaged)) {
-    return "Unmortgage the whole color set before building";
-  }
-  const lowest = Math.min(...props.map((item) => state.deeds[item.id].buildings));
-  if (deed.buildings > lowest) return "Build evenly. The other deeds in this color are behind";
-  if (deed.buildings === 4) {
+  const lowest = Math.min(...owned.map((item) => state.deeds[item.id].buildings));
+  if (deed.buildings > lowest) return "Build evenly. The other deeds in this colour are behind";
+  if (deed.buildings === 5) {
+    if (owned.length !== group.length) return "Own every street in this colour before a skyscraper";
+    if (group.some((item) => state.deeds[item.id].buildings < 5)) return "Put a hotel on every street in this colour first";
+    if (state.bank.skyscrapers < 1) return "The bank has no skyscrapers left";
+  } else if (deed.buildings === 4) {
     if (state.bank.hotels < 1) return "The bank has no hotels left";
   } else if (state.bank.houses < 1) {
     return "The bank has no houses left";
@@ -177,11 +236,11 @@ export function sellBlockReason(state, propId) {
   const deed = state.deeds[propId];
   if (!prop || prop.type !== "street") return "There are no buildings here";
   if (!deed.ownerId || deed.buildings <= 0) return "There are no buildings to sell";
-  const props = propsInGroup(prop.group);
-  const highest = Math.max(...props.map((item) => state.deeds[item.id].buildings));
+  const owned = ownedInGroup(state, prop.group, deed.ownerId);
+  const highest = Math.max(...owned.map((item) => state.deeds[item.id].buildings));
   if (deed.buildings < highest) return "Sell evenly. Take buildings off the fuller deeds first";
   if (deed.buildings === 5 && state.bank.houses < 4) {
-    return "The bank needs 4 houses to break this hotel. Sell every building on the color instead";
+    return "The bank needs 4 houses to break this hotel. Sell every building on the colour instead";
   }
   return null;
 }
@@ -192,55 +251,63 @@ export function mortgageBlockReason(state, propId) {
   if (!prop) return "Unknown property";
   if (!deed.ownerId) return "The bank still owns this";
   if (deed.mortgaged) return "This deed is already mortgaged";
+  if (deed.depot) return "Sell the train depot first";
   if (prop.type === "street") {
     const improved = propsInGroup(prop.group).some((item) => state.deeds[item.id].buildings > 0);
-    if (improved) return "Sell all houses and hotels on this color first";
+    if (improved) return "Sell all houses, hotels, and skyscrapers on this colour first";
   }
   return null;
 }
 
 export function roundBuildQuote(state, groupId) {
-  const props = propsInGroup(groupId);
-  if (props[0]?.type !== "street") return null;
-  const ownerId = monopolyOwner(state, groupId);
-  if (!ownerId) return null;
+  const dev = developer(state, groupId);
+  if (!dev) return null;
+  const { props, ownerId, complete } = dev;
   if (props.some((prop) => state.deeds[prop.id].mortgaged)) {
-    return { blocked: "Unmortgage this color before building" };
+    return { blocked: "Unmortgage this colour before building" };
   }
   const lowest = Math.min(...props.map((prop) => state.deeds[prop.id].buildings));
-  if (lowest >= 5) return { blocked: "Hotels are already built" };
+  if (lowest >= 6) return { blocked: "Skyscrapers are already built" };
+  if (lowest === 5 && !complete) return { blocked: "Own every street in this colour before a skyscraper" };
   const targets = props.filter((prop) => state.deeds[prop.id].buildings === lowest);
   const cost = targets.length * cents(props[0].houseCost);
-  const hotelsNeeded = targets.filter((prop) => state.deeds[prop.id].buildings === 4).length;
-  const housesNeeded = targets.length - hotelsNeeded;
+  const skyscrapersNeeded = lowest === 5 ? targets.length : 0;
+  const hotelsNeeded = lowest === 4 ? targets.length : 0;
+  const housesNeeded = lowest < 4 ? targets.length : 0;
   const owner = state.players.find((player) => player.id === ownerId);
   let blocked = null;
-  if (state.bank.hotels < hotelsNeeded) blocked = "Not enough hotels in the bank for a full round";
+  if (state.bank.skyscrapers < skyscrapersNeeded) blocked = "Not enough skyscrapers in the bank";
+  else if (state.bank.hotels < hotelsNeeded) blocked = "Not enough hotels in the bank for a full round";
   else if (state.bank.houses < housesNeeded) blocked = "Not enough houses in the bank for a full round";
   else if (!owner || owner.cash < cost) blocked = `${owner?.name ?? "The owner"} is short ${formatMoney(cost - (owner?.cash ?? 0))}`;
-  const noun = lowest === 4
-    ? (targets.length === 1 ? "a hotel" : `${targets.length} hotels`)
-    : (targets.length === 1 ? "1 house" : `${targets.length} houses`);
+  const noun = lowest === 5
+    ? (targets.length === 1 ? "a skyscraper" : `${targets.length} skyscrapers`)
+    : lowest === 4
+      ? (targets.length === 1 ? "a hotel" : `${targets.length} hotels`)
+      : (targets.length === 1 ? "1 house" : `${targets.length} houses`);
   return { targets, cost, blocked, noun, ownerId };
 }
 
 export function roundSellQuote(state, groupId) {
-  const props = propsInGroup(groupId);
-  if (props[0]?.type !== "street") return null;
-  const ownerId = monopolyOwner(state, groupId);
-  if (!ownerId) return null;
-  const highest = Math.max(...props.map((prop) => state.deeds[prop.id].buildings));
+  const dev = developer(state, groupId);
+  const props = dev?.props ?? propsInGroup(groupId).filter((prop) => state.deeds[prop.id].buildings > 0);
+  if (!props.length || props[0]?.type !== "street") return null;
+  const ownerId = dev?.ownerId ?? state.deeds[props[0].id].ownerId;
+  const held = propsInGroup(groupId).filter((prop) => state.deeds[prop.id].ownerId === ownerId);
+  const highest = Math.max(...held.map((prop) => state.deeds[prop.id].buildings));
   if (highest <= 0) return null;
-  const targets = props.filter((prop) => state.deeds[prop.id].buildings === highest);
+  const targets = held.filter((prop) => state.deeds[prop.id].buildings === highest);
   const refund = targets.length * Math.round(cents(props[0].houseCost) / 2);
   const hotels = targets.filter((prop) => state.deeds[prop.id].buildings === 5).length;
   let blocked = null;
   if (state.bank.houses < hotels * 4) {
     blocked = "The bank does not have enough houses to replace those hotels";
   }
-  const noun = highest === 5
-    ? (targets.length === 1 ? "1 hotel" : `${targets.length} hotels`)
-    : (targets.length === 1 ? "1 house" : `${targets.length} houses`);
+  const noun = highest === 6
+    ? (targets.length === 1 ? "1 skyscraper" : `${targets.length} skyscrapers`)
+    : highest === 5
+      ? (targets.length === 1 ? "1 hotel" : `${targets.length} hotels`)
+      : (targets.length === 1 ? "1 house" : `${targets.length} houses`);
   return { targets, refund, blocked, noun, ownerId, clearing: false };
 }
 
@@ -251,7 +318,10 @@ function applyBuild(state, propId) {
   const deed = state.deeds[propId];
   const owner = mustPlayer(state, deed.ownerId);
   owner.cash -= cents(prop.houseCost);
-  if (deed.buildings === 4) {
+  if (deed.buildings === 5) {
+    state.bank.skyscrapers -= 1;
+    deed.buildings = 6;
+  } else if (deed.buildings === 4) {
     state.bank.hotels -= 1;
     state.bank.houses += 4;
     deed.buildings = 5;
@@ -269,7 +339,10 @@ function applySell(state, propId) {
   const deed = state.deeds[propId];
   const owner = mustPlayer(state, deed.ownerId);
   owner.cash += Math.round(cents(prop.houseCost) / 2);
-  if (deed.buildings === 5) {
+  if (deed.buildings === 6) {
+    state.bank.skyscrapers += 1;
+    deed.buildings = 5;
+  } else if (deed.buildings === 5) {
     state.bank.hotels += 1;
     state.bank.houses -= 4;
     deed.buildings = 4;
@@ -360,7 +433,7 @@ export function collectPot(state, playerId) {
 
 export function incomeTaxTen(state, playerId, toPot = false) {
   const tax = Math.round(portfolio(state, playerId).taxable / 10);
-  if (tax <= 0) throw new Error("Ten percent of worth is $0");
+  if (tax <= 0) throw new Error("Ten percent of worth is £0");
   return payBank(state, playerId, tax, "Income tax, 10% of worth", { toPot });
 }
 
@@ -368,7 +441,7 @@ export function buyProperty(state, playerId, propId) {
   const prop = PROP_MAP[propId];
   if (!prop) throw new Error("Unknown property");
   const deed = state.deeds[propId];
-  if (deed.ownerId) throw new Error(`${propName(prop, state.edition)} is already owned`);
+  if (deed.ownerId) throw new Error(`${propName(prop)} is already owned`);
   const player = mustPlayer(state, playerId);
   const price = cents(prop.price);
   if (player.cash < price) throw new Error(`${player.name} is short ${formatMoney(price - player.cash)}`);
@@ -376,23 +449,25 @@ export function buyProperty(state, playerId, propId) {
   deed.ownerId = player.id;
   deed.buildings = 0;
   deed.mortgaged = false;
-  return { tone: "out", text: `${player.name} bought ${propName(prop, state.edition)} for ${formatMoney(price)}.` };
+  deed.depot = false;
+  return { tone: "out", text: `${player.name} bought ${propName(prop)} for ${formatMoney(price)}.` };
 }
 
 export function auctionProperty(state, propId, winnerId, bid) {
   const prop = PROP_MAP[propId];
   if (!prop) throw new Error("Unknown property");
   const deed = state.deeds[propId];
-  if (deed.ownerId) throw new Error(`${propName(prop, state.edition)} is already owned`);
+  if (deed.ownerId) throw new Error(`${propName(prop)} is already owned`);
   const payment = moneyIn(bid);
-  if (payment < 100) throw new Error("Bid at least $1");
+  if (payment < 100) throw new Error("Bid at least £1");
   const winner = mustPlayer(state, winnerId);
   if (winner.cash < payment) throw new Error(`${winner.name} is short ${formatMoney(payment - winner.cash)}`);
   winner.cash -= payment;
   deed.ownerId = winner.id;
   deed.buildings = 0;
   deed.mortgaged = false;
-  return { tone: "out", text: `${winner.name} won the auction for ${propName(prop, state.edition)} at ${formatMoney(payment)}.` };
+  deed.depot = false;
+  return { tone: "out", text: `${winner.name} won the auction for ${propName(prop)} at ${formatMoney(payment)}.` };
 }
 
 export function chargeRent(state, { propId, payerId, dice = 0, doubleRail = false, tenUtil = false }) {
@@ -406,7 +481,7 @@ export function chargeRent(state, { propId, payerId, dice = 0, doubleRail = fals
   if (payer.cash < quote.amount) throw new Error(`${payer.name} is short ${formatMoney(quote.amount - payer.cash)}`);
   payer.cash -= quote.amount;
   owner.cash += quote.amount;
-  const name = propName(PROP_MAP[propId], state.edition);
+  const name = propName(PROP_MAP[propId]);
   return { tone: "move", text: `${payer.name} paid ${owner.name} ${formatMoney(quote.amount)} rent for ${name} · ${quote.detail}.` };
 }
 
@@ -415,8 +490,11 @@ export function buildHouse(state, propId) {
   applyBuild(state, propId);
   const prop = PROP_MAP[propId];
   const owner = mustPlayer(state, state.deeds[propId].ownerId);
-  const name = propName(prop, state.edition);
+  const name = propName(prop);
   const cost = formatMoney(cents(prop.houseCost));
+  if (before === 5) {
+    return { tone: "out", text: `${owner.name} built a skyscraper on ${name} for ${cost}. The hotel stays underneath.` };
+  }
   if (before === 4) {
     return { tone: "out", text: `${owner.name} built a hotel on ${name} for ${cost}. Four houses went back to the bank.` };
   }
@@ -428,8 +506,11 @@ export function sellBuilding(state, propId) {
   const prop = PROP_MAP[propId];
   applySell(state, propId);
   const owner = mustPlayer(state, state.deeds[propId].ownerId);
-  const name = propName(prop, state.edition);
+  const name = propName(prop);
   const refund = formatMoney(Math.round(cents(prop.houseCost) / 2));
+  if (before === 6) {
+    return { tone: "in", text: `${owner.name} sold the skyscraper on ${name} for ${refund}. It is a hotel again.` };
+  }
   if (before === 5) {
     return { tone: "in", text: `${owner.name} sold the hotel on ${name} for ${refund} and put 4 houses back.` };
   }
@@ -438,11 +519,11 @@ export function sellBuilding(state, propId) {
 
 export function buildRound(state, groupId) {
   const quote = roundBuildQuote(state, groupId);
-  if (!quote) throw new Error("Own the whole color set before building");
+  if (!quote) throw new Error("Own all but one street in this colour before building");
   if (quote.blocked) throw new Error(quote.blocked);
   for (const prop of quote.targets) applyBuild(state, prop.id);
   const owner = mustPlayer(state, quote.ownerId);
-  const names = quote.targets.map((prop) => propName(prop, state.edition)).join(", ");
+  const names = quote.targets.map((prop) => propName(prop)).join(", ");
   return { tone: "out", text: `${owner.name} built ${quote.noun} on ${names} for ${formatMoney(quote.cost)}.` };
 }
 
@@ -452,17 +533,34 @@ export function sellRound(state, groupId) {
   if (quote.blocked) throw new Error(quote.blocked);
   for (const prop of quote.targets) applySell(state, prop.id);
   const owner = mustPlayer(state, quote.ownerId);
-  const names = quote.targets.map((prop) => propName(prop, state.edition)).join(", ");
+  const names = quote.targets.map((prop) => propName(prop)).join(", ");
   return { tone: "in", text: `${owner.name} sold ${quote.noun} on ${names} for ${formatMoney(quote.refund)}.` };
+}
+
+function returnPieces(state, deed) {
+  if (deed.buildings === 6) {
+    state.bank.skyscrapers += 1;
+    state.bank.hotels += 1;
+  } else if (deed.buildings === 5) {
+    state.bank.hotels += 1;
+  } else {
+    state.bank.houses += deed.buildings;
+  }
+  if (deed.depot) {
+    state.bank.depots += 1;
+    deed.depot = false;
+  }
+  deed.buildings = 0;
 }
 
 export function sellAllQuote(state, groupId) {
   const props = propsInGroup(groupId);
   if (props[0]?.type !== "street") return null;
-  const ownerId = monopolyOwner(state, groupId);
+  const dev = developer(state, groupId);
+  const ownerId = dev?.ownerId;
   if (!ownerId) return null;
   let refund = 0;
-  for (const prop of props) {
+  for (const prop of dev.props) {
     const buildings = state.deeds[prop.id].buildings;
     if (buildings > 0) refund += Math.round(cents(prop.houseCost) / 2) * buildings;
   }
@@ -472,23 +570,17 @@ export function sellAllQuote(state, groupId) {
 export function sellAllBuildings(state, groupId) {
   const props = propsInGroup(groupId);
   if (props[0]?.type !== "street") throw new Error("This set has no buildings");
-  const ownerId = monopolyOwner(state, groupId);
-  if (!ownerId) throw new Error("One player must own the whole color set");
-  const owner = mustPlayer(state, ownerId);
+  const dev = developer(state, groupId);
+  if (!dev) throw new Error("Own all but one street in this colour before selling the set");
+  const owner = mustPlayer(state, dev.ownerId);
   let refund = 0;
-  let housesBack = 0;
-  let hotelsBack = 0;
-  for (const prop of props) {
+  for (const prop of dev.props) {
     const deed = state.deeds[prop.id];
     if (deed.buildings <= 0) continue;
     refund += Math.round(cents(prop.houseCost) / 2) * deed.buildings;
-    if (deed.buildings === 5) hotelsBack += 1;
-    else housesBack += deed.buildings;
-    deed.buildings = 0;
+    returnPieces(state, deed);
   }
   if (refund <= 0) throw new Error("There are no buildings to sell");
-  state.bank.houses += housesBack;
-  state.bank.hotels += hotelsBack;
   assertBank(state);
   owner.cash += refund;
   const label = GROUP_MAP[groupId]?.label ?? "this";
@@ -503,7 +595,7 @@ export function mortgageProperty(state, propId) {
   const owner = mustPlayer(state, deed.ownerId);
   deed.mortgaged = true;
   owner.cash += cents(prop.mortgage);
-  return { tone: "in", text: `${owner.name} mortgaged ${propName(prop, state.edition)} and collected ${formatMoney(cents(prop.mortgage))}.` };
+  return { tone: "in", text: `${owner.name} mortgaged ${propName(prop)} and collected ${formatMoney(cents(prop.mortgage))}.` };
 }
 
 export function unmortgageProperty(state, propId) {
@@ -516,7 +608,7 @@ export function unmortgageProperty(state, propId) {
   if (owner.cash < cost) throw new Error(`${owner.name} is short ${formatMoney(cost - owner.cash)}`);
   owner.cash -= cost;
   deed.mortgaged = false;
-  return { tone: "out", text: `${owner.name} paid ${formatMoney(cost)} and lifted the mortgage on ${propName(prop, state.edition)}.` };
+  return { tone: "out", text: `${owner.name} paid ${formatMoney(cost)} and lifted the mortgage on ${propName(prop)}.` };
 }
 
 function receiveCost(state, propId, plan) {
@@ -527,11 +619,13 @@ function receiveCost(state, propId, plan) {
 }
 
 function buildingsStayLegal(state, nextOwner) {
+  const seen = new Set();
   for (const prop of PROPERTIES) {
-    if (prop.type !== "street" || state.deeds[prop.id].buildings <= 0) continue;
-    const group = propsInGroup(prop.group);
-    const owners = new Set(group.map((item) => nextOwner[item.id]));
-    if (owners.size !== 1 || owners.has(null) || owners.has(undefined)) {
+    if (prop.type !== "street" || seen.has(prop.group) || state.deeds[prop.id].buildings <= 0) continue;
+    seen.add(prop.group);
+    const owned = propsInGroup(prop.group).filter((item) => state.deeds[item.id].ownerId);
+    const destinations = new Set(owned.map((item) => nextOwner[item.id]));
+    if (destinations.size !== 1 || destinations.has(null) || destinations.has(undefined)) {
       throw new Error(`Sell the buildings on the ${GROUP_MAP[prop.group].label} set before splitting it`);
     }
   }
@@ -547,25 +641,33 @@ export function trade(state, deal) {
   const rightCash = moneyIn(deal.rightCash || 0);
   const leftCards = deal.leftCards || 0;
   const rightCards = deal.rightCards || 0;
+  const leftBus = deal.leftBus || 0;
+  const rightBus = deal.rightBus || 0;
   if (!Number.isInteger(leftCards) || leftCards < 0 || leftCards > left.jailCards) {
     throw new Error(`${left.name} does not have that many Get Out of Jail Free cards`);
   }
   if (!Number.isInteger(rightCards) || rightCards < 0 || rightCards > right.jailCards) {
     throw new Error(`${right.name} does not have that many Get Out of Jail Free cards`);
   }
+  if (!Number.isInteger(leftBus) || leftBus < 0 || leftBus > (left.busTickets || 0)) {
+    throw new Error(`${left.name} does not have that many bus tickets`);
+  }
+  if (!Number.isInteger(rightBus) || rightBus < 0 || rightBus > (right.busTickets || 0)) {
+    throw new Error(`${right.name} does not have that many bus tickets`);
+  }
   if (leftDeedIds.some((id) => rightDeedIds.includes(id))) throw new Error("A deed cannot be on both sides of the trade");
   for (const id of leftDeedIds) {
     if (!PROP_MAP[id] || state.deeds[id].ownerId !== left.id) {
-      throw new Error(`${propName(PROP_MAP[id], state.edition) || "That deed"} is not owned by ${left.name}`);
+      throw new Error(`${propName(PROP_MAP[id]) || "That deed"} is not owned by ${left.name}`);
     }
   }
   for (const id of rightDeedIds) {
     if (!PROP_MAP[id] || state.deeds[id].ownerId !== right.id) {
-      throw new Error(`${propName(PROP_MAP[id], state.edition) || "That deed"} is not owned by ${right.name}`);
+      throw new Error(`${propName(PROP_MAP[id]) || "That deed"} is not owned by ${right.name}`);
     }
   }
-  if (!leftDeedIds.length && !rightDeedIds.length && !leftCash && !rightCash && !leftCards && !rightCards) {
-    throw new Error("Add cash, a deed, or a jail card to the trade");
+  if (!leftDeedIds.length && !rightDeedIds.length && !leftCash && !rightCash && !leftCards && !rightCards && !leftBus && !rightBus) {
+    throw new Error("Add cash, a deed, a jail card, or a bus ticket to the trade");
   }
   const plan = deal.mortgagePlan || {};
   let leftFee = 0;
@@ -587,7 +689,7 @@ export function trade(state, deal) {
   const describe = (id, receiver) => {
     if (!state.deeds[id].mortgaged) return;
     const prop = PROP_MAP[id];
-    const name = propName(prop, state.edition);
+    const name = propName(prop);
     if (plan[id] === "unmortgage") notes.push(`${receiver.name} unmortgaged ${name}`);
     else notes.push(`${receiver.name} paid ${formatMoney(mortgageInterest(prop))} interest and kept ${name} mortgaged`);
   };
@@ -598,6 +700,8 @@ export function trade(state, deal) {
   right.cash = right.cash - rightCash - rightFee + leftCash;
   left.jailCards = left.jailCards - leftCards + rightCards;
   right.jailCards = right.jailCards - rightCards + leftCards;
+  left.busTickets = (left.busTickets || 0) - leftBus + rightBus;
+  right.busTickets = (right.busTickets || 0) - rightBus + leftBus;
   for (const id of leftDeedIds) {
     state.deeds[id].ownerId = right.id;
     if (state.deeds[id].mortgaged && plan[id] === "unmortgage") state.deeds[id].mortgaged = false;
@@ -607,15 +711,16 @@ export function trade(state, deal) {
     if (state.deeds[id].mortgaged && plan[id] === "unmortgage") state.deeds[id].mortgaged = false;
   }
 
-  const side = (name, deedIds, cash, cards) => {
+  const side = (name, deedIds, cash, cards, bus) => {
     const parts = [];
-    if (deedIds.length) parts.push(deedIds.map((id) => propName(PROP_MAP[id], state.edition)).join(", "));
+    if (deedIds.length) parts.push(deedIds.map((id) => propName(PROP_MAP[id])).join(", "));
     if (cash) parts.push(formatMoney(cash));
     if (cards) parts.push(cards === 1 ? "a Get Out of Jail Free card" : `${cards} Get Out of Jail Free cards`);
+    if (bus) parts.push(bus === 1 ? "a bus ticket" : `${bus} bus tickets`);
     return `${name} gave ${parts.length ? parts.join(" and ") : "nothing"}`;
   };
   const extra = notes.length ? ` ${notes.join(". ")}.` : "";
-  return { tone: "move", text: `Trade. ${side(left.name, leftDeedIds, leftCash, leftCards)}. ${side(right.name, rightDeedIds, rightCash, rightCards)}.${extra}` };
+  return { tone: "move", text: `Trade. ${side(left.name, leftDeedIds, leftCash, leftCards, leftBus)}. ${side(right.name, rightDeedIds, rightCash, rightCards, rightBus)}.${extra}` };
 }
 
 export function tradeError(state, deal) {
@@ -643,17 +748,18 @@ export function bankrupt(state, playerId, creditorId) {
       const deed = state.deeds[prop.id];
       if (prop.houseCost && deed.buildings > 0) {
         resale += Math.round(cents(prop.houseCost) / 2) * deed.buildings;
-        if (deed.buildings === 5) state.bank.hotels += 1;
-        else state.bank.houses += deed.buildings;
       }
+      if (deed.depot) resale += Math.round(cents(DEPOT_COST) / 2);
+      returnPieces(state, deed);
       deed.ownerId = null;
-      deed.buildings = 0;
       deed.mortgaged = false;
     }
     assertBank(state);
+    state.bank.busTickets += player.busTickets || 0;
     const cash = player.cash;
     player.cash = 0;
     player.jailCards = 0;
+    player.busTickets = 0;
     player.bankrupt = true;
     retarget(state, player.id);
     const buildingText = resale ? ` Buildings worth ${formatMoney(resale)} at resale were cleared.` : "";
@@ -669,9 +775,11 @@ export function bankrupt(state, playerId, creditorId) {
   }
   creditor.cash = creditor.cash + player.cash - interest;
   creditor.jailCards += player.jailCards;
+  creditor.busTickets = (creditor.busTickets || 0) + (player.busTickets || 0);
   for (const prop of owned) state.deeds[prop.id].ownerId = creditor.id;
   player.cash = 0;
   player.jailCards = 0;
+  player.busTickets = 0;
   player.bankrupt = true;
   state.activePlayerId = creditor.id;
   const interestText = interest ? ` and paid the bank ${formatMoney(interest)} in mortgage interest` : "";
@@ -716,21 +824,77 @@ export function payRepairs(state, playerId, perHouse, perHotel, note, toPot = fa
   const parts = [];
   if (bill.houses) parts.push(`${bill.houses} house${bill.houses === 1 ? "" : "s"}`);
   if (bill.hotels) parts.push(`${bill.hotels} hotel${bill.hotels === 1 ? "" : "s"}`);
+  if (bill.skyscrapers) parts.push(`${bill.skyscrapers} skyscraper${bill.skyscrapers === 1 ? "" : "s"}`);
   return payBank(state, playerId, bill.amount, `${note} (${parts.join(", ")})`, { toPot });
 }
 
-export function createGame({ players, goSalary = 200, freeParking = false, edition = "us" }) {
+export function buildDepot(state, propId) {
+  const prop = PROP_MAP[propId];
+  const deed = state.deeds[propId];
+  if (!prop || prop.type !== "railroad") throw new Error("Train depots go on stations");
+  if (!deed.ownerId) throw new Error("Buy this station before building a depot");
+  if (deed.mortgaged) throw new Error("Unmortgage the station before building a depot");
+  if (deed.depot) throw new Error("This station already has a train depot");
+  if (state.bank.depots < 1) throw new Error("The bank has no train depots left");
+  const owner = mustPlayer(state, deed.ownerId);
+  const cost = cents(DEPOT_COST);
+  if (owner.cash < cost) throw new Error(`${owner.name} is short ${formatMoney(cost - owner.cash)}`);
+  owner.cash -= cost;
+  state.bank.depots -= 1;
+  deed.depot = true;
+  assertBank(state);
+  return { tone: "out", text: `${owner.name} built a train depot on ${propName(prop)} for ${formatMoney(cost)}. Rent on this station is doubled.` };
+}
+
+export function sellDepot(state, propId) {
+  const prop = PROP_MAP[propId];
+  const deed = state.deeds[propId];
+  if (!prop || prop.type !== "railroad" || !deed?.depot) throw new Error("There is no train depot here");
+  const owner = mustPlayer(state, deed.ownerId);
+  const refund = Math.round(cents(DEPOT_COST) / 2);
+  owner.cash += refund;
+  state.bank.depots += 1;
+  deed.depot = false;
+  assertBank(state);
+  return { tone: "in", text: `${owner.name} sold the train depot on ${propName(prop)} for ${formatMoney(refund)}.` };
+}
+
+export function takeBusTicket(state, playerId) {
+  if (state.bank.busTickets <= 0) throw new Error("There are no bus tickets left in the deck");
+  const player = mustPlayer(state, playerId);
+  state.bank.busTickets -= 1;
+  player.busTickets = (player.busTickets || 0) + 1;
+  return { tone: "move", text: `${player.name} took a bus ticket. ${state.bank.busTickets} remain in the deck.` };
+}
+
+export function playBusTicket(state, playerId) {
+  const player = mustPlayer(state, playerId);
+  if ((player.busTickets || 0) <= 0) throw new Error(`${player.name} does not have a bus ticket`);
+  player.busTickets -= 1;
+  return { tone: "move", text: `${player.name} used a bus ticket. It is out of the game.` };
+}
+
+export function expireBusTickets(state) {
+  let expired = 0;
+  for (const player of state.players) {
+    expired += player.busTickets || 0;
+    player.busTickets = 0;
+  }
+  if (!expired) throw new Error("Nobody is holding a bus ticket");
+  return { tone: "out", text: `All bus tickets expire. ${expired} ticket${expired === 1 ? "" : "s"} left the game.` };
+}
+
+export function createGame({ players, goSalary = 200, freeParking = false }) {
   if (!Array.isArray(players) || players.length < 2 || players.length > 8) {
     throw new Error("Choose 2 to 8 players");
   }
-  if (edition !== "us" && edition !== "uk") throw new Error("Choose a US or UK board");
-  if (goSalary < 0 || goSalary > 10000) throw new Error("Go salary must be between $0 and $10,000");
+  if (goSalary < 0 || goSalary > 10000) throw new Error("Go salary must be between £0 and £10,000");
   const colors = new Set();
   const ready = players.map((player) => {
     const name = String(player.name || "").trim();
     if (!name) throw new Error("Give every player a name");
     if (name.length > 18) throw new Error("Keep names to 18 characters");
-    if (player.cash < 0 || player.cash > 1_000_000) throw new Error("Starting cash must be between $0 and $1,000,000");
+    if (player.cash < 0 || player.cash > 1_000_000) throw new Error("Starting cash must be between £0 and £1,000,000");
     if (!player.color || colors.has(player.color)) throw new Error("Give each player a different color");
     colors.add(player.color);
     return {
@@ -739,6 +903,7 @@ export function createGame({ players, goSalary = 200, freeParking = false, editi
       color: player.color,
       cash: cents(player.cash),
       jailCards: 0,
+      busTickets: 0,
       bankrupt: false,
     };
   });
@@ -748,15 +913,21 @@ export function createGame({ players, goSalary = 200, freeParking = false, editi
     ? `Game started. ${names} each have ${formatMoney(ready[0].cash)}.`
     : `Game started for ${names}.`;
   return {
-    version: 1,
-    edition,
+    version: 2,
+    edition: "uk-mega",
     startedAt: Date.now(),
     settings: { goSalary: cents(goSalary), freeParking: Boolean(freeParking) },
     freeParkingPot: 0,
-    bank: { houses: BANK_HOUSES, hotels: BANK_HOTELS },
+    bank: {
+      houses: BANK_HOUSES,
+      hotels: BANK_HOTELS,
+      skyscrapers: BANK_SKYSCRAPERS,
+      depots: BANK_DEPOTS,
+      busTickets: BANK_BUS_TICKETS,
+    },
     players: ready,
     activePlayerId: ready[0].id,
-    deeds: Object.fromEntries(PROPERTIES.map((prop) => [prop.id, { ownerId: null, buildings: 0, mortgaged: false }])),
+    deeds: Object.fromEntries(PROPERTIES.map((prop) => [prop.id, { ownerId: null, buildings: 0, mortgaged: false, depot: false }])),
     log: [{ id: crypto.randomUUID(), at: Date.now(), tone: "move", text }],
     history: [],
     toast: null,

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { GROUP_MAP, PROPERTIES, propName, propsInGroup } from "../data/board.js";
+import { DEPOT_COST, GROUP_MAP, PROPERTIES, RAIL_RENT, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
 import {
   buildBlockReason,
+  buildDepot,
   buildHouse,
   buildRound,
   buyProperty,
@@ -16,22 +17,13 @@ import {
   sellAllQuote,
   sellBlockReason,
   sellBuilding,
+  sellDepot,
   sellRound,
   unmortgageCost,
   unmortgageProperty,
 } from "../game/engine.js";
 import { cents, formatMoney } from "../game/money.js";
 import { DicePicker, GoldButton, PlayerChips, Sheet } from "./ui.jsx";
-
-function streetRow(state, prop) {
-  const deed = state.deeds[prop.id];
-  if (!deed.ownerId || deed.mortgaged) return null;
-  if (deed.buildings > 0) return deed.buildings;
-  const group = propsInGroup(prop.group);
-  const monopoly = group.every((item) => state.deeds[item.id].ownerId === deed.ownerId);
-  const improved = group.some((item) => state.deeds[item.id].buildings > 0);
-  return monopoly && !improved ? "double" : "base";
-}
 
 export default function PropertySheet({ propId, bonus = null, onClose, onTrade, onAuction }) {
   const { state, act, active, setActive } = useGame();
@@ -51,7 +43,7 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
   if (!prop || !deed) return null;
 
   const group = GROUP_MAP[prop.group];
-  const name = propName(prop, state.edition);
+  const name = propName(prop);
   const quote = rentQuote(state, prop.id, {
     dice: dice || 0,
     doubleRail: prop.type === "railroad" && doubleRail,
@@ -69,7 +61,7 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
   const round = roundBuildQuote(state, prop.group);
   const selling = roundSellQuote(state, prop.group);
   const clear = sellAllQuote(state, prop.group);
-  const activeRow = prop.type === "street" ? streetRow(state, prop) : null;
+  const activeRow = prop.type === "street" ? quote.tier : null;
   const railCount = prop.type === "railroad" && deed.ownerId
     ? PROPERTIES.filter((item) => item.type === "railroad" && state.deeds[item.id].ownerId === deed.ownerId).length
     : 0;
@@ -118,26 +110,31 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
 
   return (
     <Sheet title={name} kicker={group.label} onClose={onClose} footer={footer}>
-      <div className="rounded-2xl px-4 py-4" style={{ background: group.color, color: group.ink }}>
-        <p className="text-sm opacity-80">Printed price {formatMoney(price)} · Mortgage {formatMoney(cents(prop.mortgage))}</p>
-        <p className="mt-1 font-display text-3xl leading-none">
-          {deed.ownerId ? owner?.name ?? "Owned" : "Owned by the bank"}
-        </p>
-        {owner && <p className="mt-2 text-sm">Cash on hand {formatMoney(owner.cash)}</p>}
+      <div className="flex items-start gap-3 border-b border-ink/10 pb-3">
+        <span className="mt-1 h-4 w-4 shrink-0 rounded-sm" style={{ background: group.color }} />
+        <div>
+          <p className="text-sm text-ink/60">Price {formatMoney(price)} · Mortgage {formatMoney(cents(prop.mortgage))}</p>
+          <p className="text-lg font-semibold text-ink">
+            {deed.ownerId ? owner?.name ?? "Owned" : "Owned by the bank"}
+          </p>
+          {owner && <p className="text-sm text-ink/60">Cash {formatMoney(owner.cash)}</p>}
+        </div>
       </div>
 
       {prop.type === "street" && (
         <ul className="mt-4 overflow-hidden rounded-2xl bg-white/80">
           {[
             ["base", "Rent", prop.rent[0]],
-            ["double", "Full color set", prop.rent[0] * 2],
+            ["double", "Majority of the colour", prop.rent[0] * 2],
+            ["triple", "Whole colour", prop.rent[0] * 3],
             [1, "1 house", prop.rent[1]],
             [2, "2 houses", prop.rent[2]],
             [3, "3 houses", prop.rent[3]],
             [4, "4 houses", prop.rent[4]],
             [5, "Hotel", prop.rent[5]],
+            [6, "Skyscraper", prop.rent[6]],
           ].map(([id, label, amount]) => (
-            <li key={label} className={`flex items-center justify-between px-3 py-2 text-sm ${activeRow === id ? "bg-gold/40 font-semibold" : "text-ink/75"}`}>
+            <li key={label} className={`flex items-center justify-between px-3 py-2 text-sm ${activeRow === id ? "bg-ink/10 font-semibold" : "text-ink/75"}`}>
               <span>{label}</span>
               <span className="tabular-nums">{formatMoney(cents(amount))}</span>
             </li>
@@ -148,9 +145,9 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
       {prop.type === "railroad" && (
         <ul className="mt-4 overflow-hidden rounded-2xl bg-white/80">
           {[1, 2, 3, 4].map((count) => (
-            <li key={count} className={`flex items-center justify-between px-3 py-2 text-sm ${railCount === count && !deed.mortgaged ? "bg-gold/40 font-semibold" : "text-ink/75"}`}>
-              <span>{count} railroad{count > 1 ? "s" : ""}</span>
-              <span className="tabular-nums">{formatMoney(cents([0, 25, 50, 100, 200][count]))}</span>
+            <li key={count} className={`flex items-center justify-between px-3 py-2 text-sm ${railCount === count && !deed.mortgaged ? "bg-ink/10 font-semibold" : "text-ink/75"}`}>
+              <span>{count} station{count > 1 ? "s" : ""}{deed.depot && railCount === count ? " · depot" : ""}</span>
+              <span className="tabular-nums">{formatMoney(cents(RAIL_RENT[count] * (deed.depot && railCount === count ? 2 : 1)))}</span>
             </li>
           ))}
         </ul>
@@ -158,7 +155,7 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
 
       {prop.type === "utility" && (
         <p className="mt-4 rounded-2xl bg-white/80 px-3 py-3 text-sm text-ink/75">
-          One utility is 4× the dice. Both utilities are 10×. A mortgaged utility still raises the rent on the other one.
+          One utility is 4× the white dice. Two are 10×. All three are 20×. The Chance card that sends you to a utility stays at 10×. A mortgaged utility still counts toward the others.
         </p>
       )}
 
@@ -172,7 +169,7 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
         <div className="mt-5 space-y-3">
           <p className="text-sm font-medium text-ink/70">Who is buying?</p>
           <PlayerChips players={buyers} value={buyer?.id} onChange={(id) => { setBuyerId(id); setActive(id); }} />
-          <button type="button" onClick={onAuction} className="text-sm font-semibold text-gold-deep underline-offset-2 hover:underline">
+          <button type="button" onClick={onAuction} className="text-sm font-medium text-ink underline">
             Nobody buys at the printed price. Auction it.
           </button>
         </div>
@@ -185,14 +182,14 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
           {prop.type === "railroad" && (
             <label className="flex items-center gap-2 text-sm text-ink/80">
               <input type="checkbox" checked={doubleRail} onChange={(event) => setDoubleRail(event.target.checked)} />
-              Chance card: charge double rent
+              Chance card: nearest station, charge double rent
             </label>
           )}
           {prop.type === "utility" && (
             <>
               <label className="flex items-center gap-2 text-sm text-ink/80">
                 <input type="checkbox" checked={tenUtil} onChange={(event) => setTenUtil(event.target.checked)} />
-                Chance card: charge 10× the dice
+                Chance card: nearest utility, charge 10× the white dice
               </label>
               <DicePicker value={dice} onChange={setDice} />
             </>
@@ -203,11 +200,11 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
 
       {prop.type === "street" && deed.ownerId && (
         <div className="mt-5 space-y-2">
-          <p className="text-sm font-medium text-ink/70">Houses and hotels · {formatMoney(cents(prop.houseCost))} each</p>
-          <p className="text-xs text-ink/55">The bank has {state.bank.houses} houses and {state.bank.hotels} hotels.</p>
+          <p className="text-sm font-medium text-ink/70">Houses, hotels, and skyscrapers · {formatMoney(cents(prop.houseCost))} each</p>
+          <p className="text-xs text-ink/55">The bank has {state.bank.houses} houses, {state.bank.hotels} hotels, and {state.bank.skyscrapers} skyscrapers. You can build once you own all but one street. A skyscraper needs the whole colour, with a hotel on every street.</p>
           <div className="grid grid-cols-2 gap-2">
             <GoldButton tone="ghost" disabled={Boolean(buildReason)} onClick={() => run((draft) => buildHouse(draft, prop.id), false)}>
-              {deed.buildings === 4 ? "Add hotel" : "Add house"}
+              {deed.buildings === 5 ? "Add skyscraper" : deed.buildings === 4 ? "Add hotel" : "Add house"}
             </GoldButton>
             <GoldButton tone="ghost" disabled={deed.buildings <= 0 || Boolean(sellReason)} onClick={() => run((draft) => sellBuilding(draft, prop.id), false)}>
               Sell one
@@ -232,6 +229,22 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
         </div>
       )}
 
+      {prop.type === "railroad" && deed.ownerId && !deed.mortgaged && (
+        <div className="mt-5 space-y-2">
+          <p className="text-sm font-medium text-ink/70">Train depot · {formatMoney(cents(DEPOT_COST))} · the bank has {state.bank.depots}</p>
+          <p className="text-xs text-ink/55">A depot doubles this station only. You do not need the other stations. Sell it for half before mortgaging.</p>
+          {deed.depot ? (
+            <GoldButton tone="ghost" onClick={() => run((draft) => sellDepot(draft, prop.id), false)}>
+              Sell the depot · get {formatMoney(cents(DEPOT_COST / 2))}
+            </GoldButton>
+          ) : (
+            <GoldButton tone="ghost" disabled={state.bank.depots < 1 || owner.cash < cents(DEPOT_COST)} onClick={() => run((draft) => buildDepot(draft, prop.id), false)}>
+              {state.bank.depots < 1 ? "No depots left" : owner.cash < cents(DEPOT_COST) ? `${owner.name} is short ${formatMoney(cents(DEPOT_COST) - owner.cash)}` : `Build a depot · ${formatMoney(cents(DEPOT_COST))}`}
+            </GoldButton>
+          )}
+        </div>
+      )}
+
       {deed.ownerId && !deed.mortgaged && (
         <div className="mt-5 space-y-2">
           <GoldButton tone="ghost" disabled={Boolean(mortgageReason)} onClick={() => run((draft) => mortgageProperty(draft, prop.id), false)}>
@@ -242,7 +255,7 @@ export default function PropertySheet({ propId, bonus = null, onClose, onTrade, 
       )}
 
       {deed.ownerId && (
-        <button type="button" onClick={onTrade} className="mt-4 text-sm font-semibold text-gold-deep underline-offset-2 hover:underline">
+        <button type="button" onClick={onTrade} className="mt-4 text-sm font-medium text-ink underline">
           Trade {name}
         </button>
       )}

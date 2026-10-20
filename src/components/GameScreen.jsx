@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { GROUPED } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
-import { collectPot, passGo, payBank, playJailCard, portfolio } from "../game/engine.js";
+import { collect, collectPot, expireBusTickets, passGo, payBank, playBusTicket, playJailCard, portfolio, takeBusTicket } from "../game/engine.js";
 import { cents, formatMoney } from "../game/money.js";
 import { AuctionSheet, CollectSheet, PaySheet, RentSheet, TransferSheet } from "./ActionSheets.jsx";
 import CardsSheet from "./CardsSheet.jsx";
 import DeedCard from "./DeedCard.jsx";
+import { PhoneLinks } from "./PlayerDashboard.jsx";
 import PlayerSheet from "./PlayerSheet.jsx";
 import PropertySheet from "./PropertySheet.jsx";
 import TradeSheet from "./TradeSheet.jsx";
@@ -30,19 +31,19 @@ function PlayerCard({ player, worth, selected, onSelect, onManage }) {
   return (
     <article
       data-testid={`player-${player.name}`}
-      className={`deed min-w-[11.25rem] flex-1 snap-start rounded-3xl p-3 ${selected ? "ring-2 ring-gold" : ""} ${player.bankrupt ? "opacity-60" : ""}`}
+      className={`deed min-w-[11.25rem] flex-1 snap-start rounded-lg p-3 ${selected ? "border-ink" : ""} ${player.bankrupt ? "opacity-60" : ""}`}
     >
       <button type="button" disabled={player.bankrupt} onClick={onSelect} className="block w-full text-left">
         <span className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full" style={{ background: player.color }} />
           <span className="truncate text-sm font-semibold text-ink">{player.name}</span>
         </span>
-        <span data-cash={player.cash} className={`mt-2 block font-display text-3xl tabular-nums ${player.bankrupt ? "text-ink/50" : cashClass}`}>
+        <span data-cash={player.cash} className={`mt-1 block text-2xl font-semibold tabular-nums ${player.bankrupt ? "text-ink/50" : cashClass}`}>
           {player.bankrupt ? "Out" : formatMoney(player.cash)}
         </span>
         {!player.bankrupt && <span className="mt-1 block text-xs text-ink/55">Worth {formatMoney(worth)}</span>}
         {selected && !player.bankrupt && (
-          <span className="mt-1 block text-[11px] font-bold tracking-[0.14em] text-gold-deep uppercase">Acting</span>
+          <span className="mt-1 block text-xs font-medium text-ink/70">Acting</span>
         )}
       </button>
       {!player.bankrupt && (
@@ -61,10 +62,10 @@ function ActionTile({ title, detail, onClick, disabled, testId }) {
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
-      className="deed min-h-20 rounded-2xl px-3 py-3 text-left disabled:opacity-40"
+      className="deed min-h-16 rounded-lg px-3 py-2.5 text-left disabled:opacity-40"
     >
-      <span className="block text-[11px] font-semibold tracking-[0.14em] text-gold-deep uppercase">{title}</span>
-      <span className="mt-1 block font-display text-xl leading-tight text-ink">{detail}</span>
+      <span className="block text-xs text-ink/50">{title}</span>
+      <span className="mt-0.5 block text-sm font-medium leading-tight text-ink">{detail}</span>
     </button>
   );
 }
@@ -90,17 +91,15 @@ export default function GameScreen() {
 
   const visible = GROUPED.map((group) => {
     const text = query.trim().toLowerCase();
-    const monopoly = group.properties.every((prop) => state.deeds[prop.id].ownerId)
-      && new Set(group.properties.map((prop) => state.deeds[prop.id].ownerId)).size === 1;
     const properties = group.properties.filter((prop) => {
       const deed = state.deeds[prop.id];
       if (filter === "bank" && deed.ownerId) return false;
       if (filter === "mortgaged" && !deed.mortgaged) return false;
       if (filter !== "all" && filter !== "bank" && filter !== "mortgaged" && deed.ownerId !== filter) return false;
       if (!text) return true;
-      return `${prop.name} ${prop.nameUk}`.toLowerCase().includes(text);
+      return prop.name.toLowerCase().includes(text);
     });
-    return { ...group, properties, monopoly };
+    return { ...group, properties };
   }).filter((group) => group.properties.length);
 
   function openProperty(id, bonus = null) {
@@ -118,24 +117,24 @@ export default function GameScreen() {
     <main className="mx-auto min-h-dvh w-full max-w-5xl px-4 pt-5 pb-16 sm:px-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold tracking-[0.18em] text-gold uppercase">Physical board</p>
-          <h1 className="font-display text-4xl leading-none text-ivory">Monopoly Banker</h1>
-          <p className="mt-2 text-sm text-ivory/70">
-            Houses {state.bank.houses} · Hotels {state.bank.hotels}
+          <h1 className="text-xl font-semibold text-ink">Monopoly Banker</h1>
+          <p className="mt-1 text-sm text-ink/60">
+            Houses {state.bank.houses} · Hotels {state.bank.hotels} · Skyscrapers {state.bank.skyscrapers} · Depots {state.bank.depots} · Bus tickets {state.bank.busTickets}
             {state.settings.freeParking ? ` · Free Parking ${formatMoney(state.freeParkingPot)}` : ""}
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={undo} disabled={!state.history.length} className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold disabled:opacity-40">
+          <button type="button" onClick={undo} disabled={!state.history.length} className="rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink disabled:opacity-40">
             Undo
           </button>
-          <button type="button" onClick={() => setEndOpen(true)} className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold">
+          <button type="button" onClick={() => setEndOpen(true)} className="rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
             End game
           </button>
         </div>
       </header>
 
-      <p className="mt-5 text-sm text-ivory/60">Tap a player, then use an action. Ctrl+Z undoes the last move.</p>
+      <PhoneLinks />
+      <p className="mt-4 text-sm text-ink/55">Tap a player, then an action. Ctrl+Z undoes the last move.</p>
       <div className="mt-3 flex gap-3 overflow-x-auto pb-1 snap-x">
         {state.players.map((player) => (
           <PlayerCard
@@ -150,7 +149,7 @@ export default function GameScreen() {
       </div>
 
       {alive.length === 1 && (
-        <p className="mt-4 rounded-2xl bg-gold px-4 py-3 font-semibold text-ink">
+        <p className="mt-4 rounded-lg border border-ink/15 bg-white px-4 py-3 font-medium text-ink">
           {alive[0].name} is the only player left.
         </p>
       )}
@@ -174,13 +173,14 @@ export default function GameScreen() {
           ["Cards", "cards"],
           ["Auction", "auction"],
           ["Jail", "jail"],
+          ["Bus", "bus"],
         ].map(([label, type]) => (
           <button
             key={type}
             type="button"
             disabled={!active && type !== "auction"}
             onClick={() => setSheet({ type })}
-            className="shrink-0 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold disabled:opacity-40"
+            className="shrink-0 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink disabled:opacity-40"
           >
             {label}
           </button>
@@ -192,7 +192,7 @@ export default function GameScreen() {
           type="button"
           disabled={!active}
           onClick={() => act((draft) => collectPot(draft, active.id))}
-          className="mt-3 w-full rounded-2xl bg-gold px-4 py-3 text-left font-semibold text-ink disabled:opacity-40"
+          className="mt-3 w-full rounded-lg border border-ink/15 bg-white px-4 py-3 text-left font-medium text-ink disabled:opacity-40"
         >
           Give Free Parking {formatMoney(state.freeParkingPot)} to {active?.name}
         </button>
@@ -205,7 +205,7 @@ export default function GameScreen() {
             type="button"
             aria-pressed={filter === id}
             onClick={() => setFilter(id)}
-            className={`shrink-0 rounded-full px-3 py-2 text-sm font-semibold ${filter === id ? "bg-gold text-ink" : "bg-white/10 text-ivory"}`}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-medium ${filter === id ? "border-ink bg-ink text-white" : "border-ink/15 bg-white text-ink"}`}
           >
             {label}
           </button>
@@ -215,20 +215,36 @@ export default function GameScreen() {
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search deeds"
-        className="mt-3 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-base text-ivory placeholder:text-ivory/40"
+        className="mt-3 w-full rounded-lg border border-ink/15 bg-white px-3 py-2.5 text-base text-ink placeholder:text-ink/40"
       />
 
       <div className="mt-5 space-y-5">
         {visible.map((group) => {
-          const owner = group.monopoly
-            ? state.players.find((player) => player.id === state.deeds[group.properties[0].id].ownerId)
-            : null;
+          const counts = new Map();
+          for (const prop of group.properties) {
+            const ownerId = state.deeds[prop.id].ownerId;
+            if (ownerId) counts.set(ownerId, (counts.get(ownerId) || 0) + 1);
+          }
+          let holder = null;
+          let complete = false;
+          for (const [ownerId, count] of counts) {
+            if (count === group.properties.length) {
+              holder = state.players.find((player) => player.id === ownerId);
+              complete = true;
+            } else if (!complete && group.properties[0].type === "street" && count >= group.properties.length - 1) {
+              holder = state.players.find((player) => player.id === ownerId);
+            }
+          }
           return (
             <section key={group.id}>
               <div className="mb-2 flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full" style={{ background: group.color }} />
-                <h2 className="text-sm font-semibold tracking-[0.12em] text-ivory/80 uppercase">{group.label}</h2>
-                {owner && <span className="text-xs text-gold">{owner.name} owns the set</span>}
+                <h2 className="text-sm font-medium text-ink">{group.label}</h2>
+                {holder && (
+                  <span className="text-xs text-ink/55">
+                    {holder.name} {complete ? "owns the set" : "can build"}
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {group.properties.map((prop) => (
@@ -237,7 +253,6 @@ export default function GameScreen() {
                     prop={prop}
                     deed={state.deeds[prop.id]}
                     owner={state.players.find((player) => player.id === state.deeds[prop.id].ownerId)}
-                    edition={state.edition}
                     onClick={() => openProperty(prop.id)}
                   />
                 ))}
@@ -245,13 +260,13 @@ export default function GameScreen() {
             </section>
           );
         })}
-        {visible.length === 0 && <p className="text-sm text-ivory/60">No deeds match.</p>}
+        {visible.length === 0 && <p className="text-sm text-ink/55">No deeds match.</p>}
       </div>
 
       <section className="mt-8">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-display text-2xl">Ledger</h2>
-          <button type="button" onClick={() => setSheet({ type: "log" })} className="text-sm font-semibold text-gold">
+          <h2 className="text-base font-semibold">Ledger</h2>
+          <button type="button" onClick={() => setSheet({ type: "log" })} className="text-sm font-medium text-ink underline">
             View all
           </button>
         </div>
@@ -320,7 +335,44 @@ export default function GameScreen() {
                 if (result.ok) setSheet(null);
               }}
             >
-              {active.cash < cents(50) ? `Short ${formatMoney(cents(50) - active.cash)}` : "Pay the $50 fine"}
+              {active.cash < cents(50) ? `Short ${formatMoney(cents(50) - active.cash)}` : "Pay the £50 fine"}
+            </GoldButton>
+          </div>
+        </Sheet>
+      )}
+      {sheet?.type === "bus" && active && (
+        <Sheet title="Bus tickets" kicker={active.name} onClose={() => setSheet(null)}>
+          <p className="text-sm leading-relaxed text-ink/75">
+            {active.name} holds {active.busTickets || 0}. The deck has {state.bank.busTickets} left. A used or expired ticket leaves the game. Move the token on the physical board, then record the space you reached.
+          </p>
+          <div className="mt-4 space-y-3">
+            <GoldButton
+              disabled={state.bank.busTickets <= 0}
+              onClick={() => act((draft) => takeBusTicket(draft, active.id))}
+            >
+              {state.bank.busTickets > 0 ? "Take a bus ticket" : "The deck is empty"}
+            </GoldButton>
+            <GoldButton
+              tone="ink"
+              disabled={(active.busTickets || 0) <= 0}
+              onClick={() => {
+                const result = act((draft) => playBusTicket(draft, active.id));
+                if (result.ok) setSheet(null);
+              }}
+            >
+              Use a bus ticket
+            </GoldButton>
+            <GoldButton tone="ghost" onClick={() => act((draft) => collect(draft, active.id, cents(100), "Birthday gift"))}>
+              Birthday gift · collect £100
+            </GoldButton>
+            <GoldButton
+              tone="danger"
+              onClick={() => {
+                const result = act((draft) => expireBusTickets(draft));
+                if (result.ok) setSheet(null);
+              }}
+            >
+              All tickets expire
             </GoldButton>
           </div>
         </Sheet>

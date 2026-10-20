@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { GROUPED, propName } from "../data/board.js";
+import { GROUPED, buildingLabel, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
 import { bankrupt, correctCash, playJailCard, portfolio } from "../game/engine.js";
 import { formatMoney, parseMoney } from "../game/money.js";
@@ -17,10 +17,12 @@ export default function PlayerSheet({ playerId, onClose, onOpenDeed }) {
 
   return (
     <Sheet title={player.name} kicker={player.bankrupt ? "Out of the game" : "Player"} onClose={onClose}>
-      <div className="rounded-2xl px-4 py-4 text-ivory" style={{ background: player.color }}>
-        <p className="text-sm opacity-80">Cash</p>
-        <p className="font-display text-5xl tabular-nums">{formatMoney(player.cash)}</p>
-        <p className="mt-1 text-sm opacity-80">Worth {formatMoney(books.worth)}</p>
+      <div className="flex items-end justify-between gap-3 border-b border-ink/10 pb-3">
+        <div>
+          <p className="text-sm text-ink/55">Cash</p>
+          <p className="text-3xl font-semibold tabular-nums">{player.bankrupt ? "Out" : formatMoney(player.cash)}</p>
+        </div>
+        <p className="pb-1 text-sm text-ink/60">Worth {formatMoney(books.worth)}</p>
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
         {[
@@ -55,15 +57,16 @@ export default function PlayerSheet({ playerId, onClose, onOpenDeed }) {
           if (!owned.length) return null;
           return (
             <section key={group.id}>
-              <h3 className="text-xs font-semibold tracking-[0.14em] text-ink/50 uppercase">{group.label}</h3>
+              <h3 className="text-sm font-medium text-ink/60">{group.label}</h3>
               <div className="mt-2 space-y-1.5">
                 {owned.map((prop) => {
                   const deed = state.deeds[prop.id];
                   return (
                     <button key={prop.id} type="button" onClick={() => onOpenDeed(prop.id)} className="flex w-full items-center justify-between rounded-xl bg-white px-3 py-2 text-left text-sm text-ink">
-                      <span>{propName(prop, state.edition)}</span>
+                      <span>{propName(prop)}</span>
                       <span className="text-xs text-ink/50">
-                        {deed.buildings === 5 ? "Hotel" : deed.buildings > 0 ? `${deed.buildings} houses` : ""}
+                        {buildingLabel(deed.buildings)}
+                        {deed.depot ? " Depot" : ""}
                         {deed.mortgaged ? " Mortgaged" : ""}
                       </span>
                     </button>

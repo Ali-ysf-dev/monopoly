@@ -11,18 +11,18 @@ export function formatMoney(amount) {
   const dollars = Math.floor(absolute / 100);
   const remainder = absolute % 100;
   const body = remainder === 0
-    ? dollars.toLocaleString("en-US")
-    : `${dollars.toLocaleString("en-US")}.${String(remainder).padStart(2, "0")}`;
-  return `${negative ? "-$" : "$"}${body}`;
+    ? dollars.toLocaleString("en-GB")
+    : `${dollars.toLocaleString("en-GB")}.${String(remainder).padStart(2, "0")}`;
+  return `${negative ? "-£" : "£"}${body}`;
 }
 
 export function formatTyping(value) {
-  if (!value) return "$0";
+  if (!value) return "£0";
   const [dollars, fraction] = String(value).split(".");
   const amount = Number(dollars || 0);
-  if (!Number.isFinite(amount)) return "$0";
-  const withCommas = amount.toLocaleString("en-US");
-  return fraction !== undefined ? `$${withCommas}.${fraction}` : `$${withCommas}`;
+  if (!Number.isFinite(amount)) return "£0";
+  const withCommas = amount.toLocaleString("en-GB");
+  return fraction !== undefined ? `£${withCommas}.${fraction}` : `£${withCommas}`;
 }
 
 export function parseMoney(value, { emptyIsZero = false } = {}) {
