@@ -1,11 +1,26 @@
+export const SEAT_MS = 90_000;
+
 export function emptyRoom() {
-  return { hostToken: null, hostStamp: 0, revision: 0, lastSeq: 0, game: null };
+  return { hostToken: null, hostStamp: 0, revision: 0, lastSeq: 0, game: null, seats: {} };
 }
 
-export function view(room, token, links, stream) {
+function freshSeats(room, now = Date.now()) {
+  const seats = {};
+  for (const [id, seat] of Object.entries(room.seats || {})) {
+    if (seat?.token && now - seat.at < SEAT_MS) seats[id] = seat;
+  }
+  return seats;
+}
+
+export function view(room, token, links, stream, now = Date.now()) {
   let role = "open";
   if (room.hostToken && token === room.hostToken) role = "host";
   else if (room.hostToken) role = "guest";
+  const seats = freshSeats(room, now);
+  let mine = null;
+  for (const [id, seat] of Object.entries(seats)) {
+    if (seat.token === token) mine = id;
+  }
   return {
     role,
     revision: room.revision,
@@ -13,6 +28,37 @@ export function view(room, token, links, stream) {
     game: room.game,
     links,
     stream: Boolean(stream),
+    taken: Object.keys(seats),
+    mine,
+  };
+}
+
+export function mergeSeats(current = {}, next = {}, token = "") {
+  const seats = { ...current };
+  if (token) {
+    for (const [id, seat] of Object.entries(seats)) {
+      if (seat?.token === token) delete seats[id];
+    }
+  }
+  for (const [id, seat] of Object.entries(next || {})) {
+    if (!seat?.token) continue;
+    if (!seats[id] || seat.at >= seats[id].at) seats[id] = seat;
+  }
+  return seats;
+}
+
+export function mergeRooms(current, next) {
+  if (!current) return { ...emptyRoom(), ...next, seats: next.seats || {} };
+  const seats = mergeSeats(current.seats, next.seats, next.seatTouch || "");
+  const nextGameWins = (next.revision || 0) >= (current.revision || 0);
+  const nextHostWins = (next.hostStamp || 0) >= (current.hostStamp || 0);
+  return {
+    hostToken: nextHostWins ? (next.hostToken || null) : (current.hostToken || null),
+    hostStamp: Math.max(next.hostStamp || 0, current.hostStamp || 0),
+    revision: Math.max(next.revision || 0, current.revision || 0),
+    lastSeq: Math.max(next.lastSeq || 0, current.lastSeq || 0),
+    game: nextGameWins ? (next.game ?? null) : (current.game ?? null),
+    seats,
   };
 }
 
@@ -45,13 +91,30 @@ export function applyRelease(room, token) {
   };
 }
 
+export function applyJoin(room, { token, playerId }, now = Date.now()) {
+  if (!token || typeof token !== "string") return { error: "Missing token", status: 400 };
+  if (!room.game) return { error: "The banker has not started", status: 400 };
+  const player = room.game.players.find((item) => item.id === playerId);
+  if (!player) return { error: "That player is not in this game", status: 404 };
+  const seats = freshSeats(room, now);
+  for (const [id, seat] of Object.entries(seats)) {
+    if (seat.token === token && id !== playerId) delete seats[id];
+  }
+  const current = seats[playerId];
+  if (current && current.token !== token) {
+    return { error: `${player.name} is already open on another phone`, status: 409, room };
+  }
+  seats[playerId] = { token, at: now };
+  return { room: { ...room, seats, seatTouch: token }, changed: true };
+}
+
 function sameGame(left, right) {
   if (left === right) return true;
   if (!left || !right) return false;
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function applyGame(room, { token, hostStamp, seq, game }) {
+export function applyGame(room, { token, hostStamp, seq, game, baseRevision }) {
   let next = room;
   if (!next.hostToken && token) next = { ...next, hostToken: token };
   if (!token || token !== next.hostToken) {
@@ -59,6 +122,9 @@ export function applyGame(room, { token, hostStamp, seq, game }) {
   }
   if (hostStamp !== next.hostStamp || (Number.isInteger(seq) && seq < next.lastSeq)) {
     return { room: next, ignored: true };
+  }
+  if (Number.isInteger(baseRevision) && baseRevision !== next.revision && game?.startedAt && game.startedAt === next.game?.startedAt) {
+    return { room: next, conflict: true };
   }
   const stamped = Number.isInteger(seq) ? { ...next, lastSeq: seq } : next;
   if (game === null) {

@@ -1,5 +1,6 @@
 import os from "node:os";
-import { applyClaim, applyGame, applyRelease, emptyRoom, linksForHost, view } from "./logic.js";
+import { applyPlayerAction } from "./actions.js";
+import { applyClaim, applyGame, applyJoin, applyRelease, emptyRoom, linksForHost, view } from "./logic.js";
 
 function lanAddresses() {
   const found = [];
@@ -54,9 +55,21 @@ function send(res, status, body) {
 export function createRoom() {
   let room = emptyRoom();
   const clients = new Set();
+  let chain = Promise.resolve();
+
+  function enqueue(task) {
+    const run = chain.then(task, task);
+    chain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  function snapshot() {
+    const body = view(room, "", [], true);
+    return { revision: body.revision, hostStamp: body.hostStamp, game: body.game, taken: body.taken };
+  }
 
   function publish() {
-    const payload = `data: ${JSON.stringify({ revision: room.revision, hostStamp: room.hostStamp, game: room.game })}\n\n`;
+    const payload = `data: ${JSON.stringify(snapshot())}\n\n`;
     for (const res of clients) res.write(payload);
   }
 
@@ -86,46 +99,92 @@ export function createRoom() {
 
       if (req.method === "POST" && url.pathname === "/api/claim") {
         const body = await readBody(req);
-        const result = applyClaim(room, { token: body.token, takeover: body.takeover === true });
-        if (result.error) {
-          send(res, result.status, { error: result.error });
-          return;
-        }
-        room = result.room;
-        if (result.changed) publish();
-        send(res, 200, answer(req, body.token || ""));
+        await enqueue(async () => {
+          const result = applyClaim(room, { token: body.token, takeover: body.takeover === true });
+          if (result.error) {
+            send(res, result.status, { error: result.error });
+            return;
+          }
+          room = result.room;
+          if (result.changed) publish();
+          send(res, 200, answer(req, body.token || ""));
+        });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/release") {
         const body = await readBody(req);
-        const result = applyRelease(room, body.token);
-        room = result.room;
-        if (result.changed) publish();
-        send(res, 200, { ok: true, ...answer(req, "") });
+        await enqueue(async () => {
+          const result = applyRelease(room, body.token);
+          room = result.room;
+          if (result.changed) publish();
+          send(res, 200, { ok: true, ...answer(req, "") });
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/join") {
+        const token = String(req.headers["x-banker-token"] || "");
+        const body = await readBody(req);
+        await enqueue(async () => {
+          const result = applyJoin(room, { token, playerId: body.playerId });
+          if (result.error) {
+            send(res, result.status || 400, { error: result.error });
+            return;
+          }
+          room = result.room;
+          publish();
+          send(res, 200, { ok: true, ...answer(req, token) });
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/act") {
+        const token = String(req.headers["x-banker-token"] || "");
+        const body = await readBody(req);
+        await enqueue(async () => {
+          const result = applyPlayerAction(room, {
+            token,
+            playerId: body.playerId,
+            action: body.action,
+            propId: body.propId,
+            groupId: body.groupId,
+          });
+          if (result.error) {
+            send(res, result.status || 400, { error: result.error });
+            return;
+          }
+          room = result.room;
+          publish();
+          send(res, 200, { ok: true, revision: room.revision, game: room.game });
+        });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/game") {
         const token = String(req.headers["x-banker-token"] || "");
         const body = await readBody(req);
-        const result = applyGame(room, {
-          token,
-          hostStamp: body.hostStamp,
-          seq: body.seq,
-          game: body.game,
-        });
-        if (result.error) {
-          send(res, result.status, { error: result.error });
-          return;
-        }
-        room = result.room;
-        if (result.changed) publish();
-        send(res, 200, {
-          revision: room.revision,
-          hostStamp: room.hostStamp,
-          ignored: Boolean(result.ignored),
-          unchanged: Boolean(result.unchanged),
+        await enqueue(async () => {
+          const result = applyGame(room, {
+            token,
+            hostStamp: body.hostStamp,
+            seq: body.seq,
+            game: body.game,
+            baseRevision: body.baseRevision,
+          });
+          if (result.error) {
+            send(res, result.status, { error: result.error });
+            return;
+          }
+          room = result.room;
+          if (result.changed) publish();
+          send(res, 200, {
+            revision: room.revision,
+            hostStamp: room.hostStamp,
+            ignored: Boolean(result.ignored),
+            unchanged: Boolean(result.unchanged),
+            conflict: Boolean(result.conflict),
+          });
         });
         return;
       }
@@ -136,7 +195,7 @@ export function createRoom() {
           "cache-control": "no-cache, no-transform",
           connection: "keep-alive",
         });
-        res.write(`data: ${JSON.stringify({ revision: room.revision, hostStamp: room.hostStamp, game: room.game })}\n\n`);
+        res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
         clients.add(res);
         const ping = setInterval(() => {
           res.write(": ping\n\n");

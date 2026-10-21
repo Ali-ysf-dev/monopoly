@@ -2,16 +2,30 @@ const TOKEN_KEY = "monopoly-banker-device";
 const REV_KEY = "monopoly-banker-rev";
 
 export function deviceToken() {
-  let token = localStorage.getItem(TOKEN_KEY);
+  const store = wantsPlayerView() ? sessionStorage : localStorage;
+  let token = store.getItem(TOKEN_KEY);
   if (!token) {
     token = crypto.randomUUID();
-    localStorage.setItem(TOKEN_KEY, token);
+    store.setItem(TOKEN_KEY, token);
   }
   return token;
 }
 
+export function playerFromUrl() {
+  return new URLSearchParams(location.search).get("as") || "";
+}
+
+export function personalLink(base, playerId) {
+  const url = new URL(base);
+  url.searchParams.set("play", "1");
+  if (playerId) url.searchParams.set("as", playerId);
+  else url.searchParams.delete("as");
+  return url.toString();
+}
+
 export function wantsPlayerView() {
-  return new URLSearchParams(location.search).get("play") === "1";
+  const params = new URLSearchParams(location.search);
+  return params.get("play") === "1" || Boolean(params.get("as"));
 }
 
 export function rememberedRevision() {
@@ -55,7 +69,7 @@ export function withPlayerLinks(links) {
 }
 
 export function fetchSession(token) {
-  return fetch("/api/session", {
+  return fetch(`/api/session?t=${Date.now()}`, {
     headers: { "x-banker-token": token },
     cache: "no-store",
   }).then(async (response) => {
@@ -75,13 +89,22 @@ export function releaseHost(token) {
 
 let pushSeq = 0;
 
-export function pushGame(token, state, hostStamp) {
+export function pushGame(token, state, hostStamp, baseRevision) {
   pushSeq += 1;
   return post("/api/game", token, {
     seq: pushSeq,
     hostStamp,
+    baseRevision,
     game: stripForSync(state),
   });
+}
+
+export function joinSeat(token, playerId) {
+  return post("/api/join", token, { playerId });
+}
+
+export function actAsPlayer(token, playerId, action, extra = {}) {
+  return post("/api/act", token, { playerId, action, ...extra });
 }
 
 export function subscribe(onMessage, onStatus) {
@@ -90,13 +113,16 @@ export function subscribe(onMessage, onStatus) {
   let source = null;
 
   function emit(payload) {
-    const key = `${payload.hostStamp}:${payload.revision}`;
+    const taken = (payload.taken || []).join(",");
+    const key = `${payload.hostStamp}:${payload.revision}:${taken}:${payload.mine || ""}`;
     if (key === lastKey) return;
     lastKey = key;
     onMessage({
       revision: payload.revision,
       hostStamp: payload.hostStamp,
       game: payload.game ?? null,
+      taken: payload.taken,
+      mine: payload.mine || null,
     });
   }
 

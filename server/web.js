@@ -1,4 +1,5 @@
-import { applyClaim, applyGame, applyRelease, linksForHost, view } from "./logic.js";
+import { applyPlayerAction } from "./actions.js";
+import { applyClaim, applyGame, applyJoin, applyRelease, linksForHost, view } from "./logic.js";
 import { loadRoom, saveRoom } from "./store.js";
 
 const headers = {
@@ -19,7 +20,8 @@ function linksFrom(request) {
 }
 
 async function persist(result) {
-  if (result.changed || result.refresh) await saveRoom(result.room);
+  if (result.changed || result.refresh) result.room = await saveRoom(result.room);
+  return result;
 }
 
 export async function handleRequest(request, action) {
@@ -36,12 +38,22 @@ export async function handleRequest(request, action) {
     let result;
     if (action === "claim") result = applyClaim(room, { token: body.token, takeover: body.takeover === true });
     else if (action === "release") result = applyRelease(room, body.token);
-    else if (action === "game") {
+    else if (action === "join") result = applyJoin(room, { token: headerToken || body.token, playerId: body.playerId });
+    else if (action === "act") {
+      result = applyPlayerAction(room, {
+        token: headerToken,
+        playerId: body.playerId,
+        action: body.action,
+        propId: body.propId,
+        groupId: body.groupId,
+      });
+    } else if (action === "game") {
       result = applyGame(room, {
         token: headerToken,
         hostStamp: body.hostStamp,
         seq: body.seq,
         game: body.game,
+        baseRevision: body.baseRevision,
       });
     } else return json({ error: "Not found" }, 404);
 
@@ -54,7 +66,12 @@ export async function handleRequest(request, action) {
         hostStamp: result.room.hostStamp,
         ignored: Boolean(result.ignored),
         unchanged: Boolean(result.unchanged),
+        conflict: Boolean(result.conflict),
       });
+    }
+
+    if (action === "act") {
+      return json({ ok: true, revision: result.room.revision, game: result.room.game });
     }
 
     const token = action === "release" ? "" : (body.token || headerToken);

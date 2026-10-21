@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GROUPED, GROUP_MAP, buildingLabel, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
-import { withPlayerLinks } from "../game/sync.js";
+import { personalLink, withPlayerLinks } from "../game/sync.js";
 import { portfolio, rentQuote, unmortgageCost } from "../game/engine.js";
 import { cents, formatMoney } from "../game/money.js";
 
@@ -19,19 +19,27 @@ function useCashFlash(value) {
 }
 
 export function PhoneLinks() {
-  const { links } = useGame();
+  const { links, state } = useGame();
   const shown = withPlayerLinks(links);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState("");
   if (!shown.length) return null;
-  const link = shown[0];
+  const players = state?.players?.filter((player) => !player.bankrupt) ?? [];
+  const rows = players.length
+    ? players.map((player) => ({
+      key: player.id,
+      name: player.name,
+      color: player.color,
+      href: personalLink(shown[0], player.id),
+    }))
+    : [{ key: "table", name: "", color: "", href: personalLink(shown[0]) }];
 
-  async function copy() {
+  async function copy(href) {
     try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      await navigator.clipboard.writeText(href);
+      setCopied(href);
+      setTimeout(() => setCopied(""), 1600);
     } catch {
-      setCopied(false);
+      setCopied("");
     }
   }
 
@@ -39,19 +47,26 @@ export function PhoneLinks() {
     <section className="mt-4 rounded-lg border border-ink/15 bg-white px-4 py-3">
       <h2 className="text-sm font-semibold text-ink">Player phones</h2>
       <p className="mt-1 text-sm leading-relaxed text-ink/70">
-        Each player opens this link on their own phone, taps their name, and sees their cash and deeds update while you bank.
+        {players.length
+          ? "Each player opens their own link. Several phones can stay connected at once."
+          : "Players open this link, then tap their own name when the game starts."}
       </p>
-      <p className="mt-2 break-all text-sm font-medium text-ink" data-testid="phone-link">{link}</p>
-      {shown.length > 1 && (
-        <ul className="mt-2 space-y-1">
-          {shown.slice(1).map((extra) => (
-            <li key={extra} className="break-all text-sm text-ink/70">{extra}</li>
-          ))}
-        </ul>
-      )}
-      <button type="button" onClick={copy} className="mt-3 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
-        {copied ? "Copied" : "Copy link"}
-      </button>
+      <ul className="mt-3 space-y-3">
+        {rows.map((row) => (
+          <li key={row.key}>
+            {row.name && (
+              <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: row.color }} />
+                {row.name}
+              </span>
+            )}
+            <p className="mt-1 break-all text-sm font-medium text-ink" data-testid={row.name ? `phone-link-${row.name}` : "phone-link"}>{row.href}</p>
+            <button type="button" onClick={() => copy(row.href)} className="mt-2 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
+              {copied === row.href ? "Copied" : "Copy link"}
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -79,53 +94,105 @@ function deedFacts(state, prop, deed) {
   return facts;
 }
 
-function OwnedDeed({ state, prop, deed }) {
+function ActionButton({ children, onClick, disabled, testId }) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function OwnedDeed({ state, prop, deed, busy, onAct }) {
   const facts = deedFacts(state, prop, deed);
+  const street = prop.type === "street";
+  const station = prop.type === "railroad";
   return (
     <article data-testid={`dashboard-deed-${prop.id}`} className="deed rounded-lg px-3 py-3">
       <div className="flex items-start gap-3">
         <span className="mt-1 h-10 w-1.5 shrink-0 rounded-full" style={{ background: GROUP_MAP[prop.group].color }} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-ink">{propName(prop)}</h3>
           <ul className="mt-1 space-y-0.5 text-sm text-ink/70">
             {facts.map((fact) => (
               <li key={fact}>{fact}</li>
             ))}
           </ul>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {street && !deed.mortgaged && deed.buildings < 6 && (
+              <ActionButton testId={`build-${prop.id}`} disabled={busy} onClick={() => onAct("build", { propId: prop.id })}>
+                Build · {formatMoney(cents(prop.houseCost))}
+              </ActionButton>
+            )}
+            {street && deed.buildings > 0 && (
+              <ActionButton testId={`sell-${prop.id}`} disabled={busy} onClick={() => onAct("sell", { propId: prop.id })}>
+                Sell building
+              </ActionButton>
+            )}
+            {station && !deed.mortgaged && !deed.depot && (
+              <ActionButton disabled={busy} onClick={() => onAct("depot", { propId: prop.id })}>Depot · £100</ActionButton>
+            )}
+            {station && deed.depot && (
+              <ActionButton disabled={busy} onClick={() => onAct("sellDepot", { propId: prop.id })}>Sell depot</ActionButton>
+            )}
+            {!deed.mortgaged && deed.buildings === 0 && !deed.depot && (
+              <ActionButton testId={`mortgage-${prop.id}`} disabled={busy} onClick={() => onAct("mortgage", { propId: prop.id })}>
+                Mortgage · {formatMoney(cents(prop.mortgage))}
+              </ActionButton>
+            )}
+            {deed.mortgaged && (
+              <ActionButton testId={`unmortgage-${prop.id}`} disabled={busy} onClick={() => onAct("unmortgage", { propId: prop.id })}>
+                Unmortgage · {formatMoney(unmortgageCost(prop))}
+              </ActionButton>
+            )}
+          </div>
         </div>
       </div>
     </article>
   );
 }
 
-function Picker({ players, onChoose }) {
+function Picker({ players, taken, error, onChoose }) {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-4 py-8">
       <h1 className="text-2xl font-semibold text-ink">Who are you?</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink/70">
-        This phone shows only your cash and your deeds. Tap your name.
+        Tap your own name. Every player can join from their phone at the same time.
       </p>
+      {error && <p className="mt-4 text-sm text-rose-800">{error}</p>}
       <div className="mt-6 space-y-2">
-        {players.map((player) => (
-          <button
-            key={player.id}
-            type="button"
-            data-testid={`join-${player.name}`}
-            onClick={() => onChoose(player.id)}
-            className="deed flex w-full items-center gap-3 rounded-lg px-4 py-4 text-left"
-          >
-            <span className="h-4 w-4 rounded-full" style={{ background: player.color }} />
-            <span className="text-base font-semibold text-ink">{player.name}</span>
-            {player.bankrupt && <span className="ml-auto text-sm text-ink/50">Out</span>}
-          </button>
-        ))}
+        {players.map((player) => {
+          const busy = taken.includes(player.id);
+          return (
+            <button
+              key={player.id}
+              type="button"
+              data-testid={`join-${player.name}`}
+              disabled={busy}
+              onClick={() => onChoose(player.id)}
+              className="deed flex w-full items-center gap-3 rounded-lg px-4 py-4 text-left disabled:opacity-50"
+            >
+              <span className="h-4 w-4 rounded-full" style={{ background: player.color }} />
+              <span className="text-base font-semibold text-ink">{player.name}</span>
+              {busy && <span className="ml-auto text-sm text-ink/50">On a phone</span>}
+              {!busy && player.bankrupt && <span className="ml-auto text-sm text-ink/50">Out</span>}
+            </button>
+          );
+        })}
       </div>
     </main>
   );
 }
 
 export default function PlayerDashboard() {
-  const { state, role, live, followedId, choosePlayer, clearPlayer, takeOverBanker } = useGame();
+  const { state, role, live, followedId, taken, joinError, choosePlayer, clearPlayer, takeOverBanker, playerAct } = useGame();
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const player = state?.players.find((item) => item.id === followedId) ?? null;
   const flash = useCashFlash(player?.cash ?? 0);
   const cashClass = flash === "up" ? "text-emerald-700" : flash === "down" ? "text-rose-700" : "text-ink";
@@ -137,7 +204,7 @@ export default function PlayerDashboard() {
       <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center px-4 py-8">
         <h1 className="text-2xl font-semibold text-ink">Your dashboard</h1>
         <p className="mt-2 text-sm leading-relaxed text-ink/70">
-          This phone cannot see the table yet. Join the same Wi-Fi as the banker and open the link on the banker screen.
+          This phone cannot see the table yet. Open your link from the banker again.
         </p>
       </main>
     );
@@ -161,13 +228,22 @@ export default function PlayerDashboard() {
     );
   }
 
-  if (!player) return <Picker players={state.players} onChoose={choosePlayer} />;
+  if (!player) return <Picker players={state.players} taken={taken} error={joinError} onChoose={choosePlayer} />;
 
   const books = portfolio(state, player.id);
+  const forSale = GROUPED.flatMap((group) => group.properties.filter((prop) => !state.deeds[prop.id].ownerId));
   const groups = GROUPED.map((group) => ({
     ...group,
     properties: group.properties.filter((prop) => state.deeds[prop.id].ownerId === player.id),
   })).filter((group) => group.properties.length);
+
+  async function onAct(action, extra) {
+    setBusy(true);
+    setActionError("");
+    const result = await playerAct(action, extra);
+    setBusy(false);
+    if (!result.ok) setActionError(result.error);
+  }
   const latest = state.log?.[0]?.text;
 
   return (
@@ -222,15 +298,46 @@ export default function PlayerDashboard() {
         <div className="mt-3 space-y-5">
           {groups.map((group) => (
             <div key={group.id}>
-              <h3 className="text-xs font-medium text-ink/50">{group.label}</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-medium text-ink/50">{group.label}</h3>
+                {group.properties.some((prop) => state.deeds[prop.id].buildings > 0) && (
+                  <button type="button" disabled={busy || player.bankrupt} onClick={() => onAct("sellAll", { groupId: group.id })} className="text-xs font-medium text-ink/70 underline-offset-2 hover:underline disabled:opacity-40">
+                    Sell all buildings
+                  </button>
+                )}
+              </div>
               <div className="mt-2 space-y-2">
                 {group.properties.map((prop) => (
-                  <OwnedDeed key={prop.id} state={state} prop={prop} deed={state.deeds[prop.id]} />
+                  <OwnedDeed
+                    key={prop.id}
+                    state={state}
+                    prop={prop}
+                    deed={state.deeds[prop.id]}
+                    busy={busy || player.bankrupt}
+                    onAct={onAct}
+                  />
                 ))}
               </div>
             </div>
           ))}
         </div>
+        {actionError && <p className="mt-3 text-sm text-rose-800">{actionError}</p>}
+        {forSale.length > 0 && !player.bankrupt && (
+          <details className="mt-6">
+            <summary className="cursor-pointer text-sm font-semibold text-ink">Buy a deed from the bank</summary>
+            <div className="mt-3 space-y-2">
+              {forSale.map((prop) => (
+                <div key={prop.id} className="deed flex items-center gap-3 rounded-lg px-3 py-2">
+                  <span className="h-8 w-1.5 shrink-0 rounded-full" style={{ background: GROUP_MAP[prop.group].color }} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{propName(prop)}</span>
+                  <ActionButton testId={`buy-${prop.id}`} disabled={busy} onClick={() => onAct("buy", { propId: prop.id })}>
+                    Buy · {formatMoney(cents(prop.price))}
+                  </ActionButton>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </section>
     </main>
   );
