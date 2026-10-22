@@ -73,6 +73,10 @@ export default function SetupScreen() {
         setError("Give every player a name.");
         return;
       }
+      if (ready.some((item) => item.name.toLowerCase() === player.name.trim().toLowerCase())) {
+        setError("Give each player a different name.");
+        return;
+      }
       if (cash == null) {
         setError(`Enter a whole number of pounds for ${player.name.trim() || "each player"}.`);
         return;
@@ -120,11 +124,12 @@ export default function SetupScreen() {
             {players.map((player, index) => (
               <div key={player.id} className="rounded-2xl bg-white/70 p-3">
                 <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-                  <Field label={`Player ${index + 1}`}>
+                  <Field label={`Player ${index + 1} name`}>
                     <input
                       className={fieldClass}
                       maxLength={18}
                       value={player.name}
+                      placeholder="Name"
                       data-testid={`player-name-${index}`}
                       onChange={(event) => update(player.id, { name: event.target.value })}
                     />

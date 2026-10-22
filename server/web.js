@@ -1,5 +1,5 @@
 import { applyPlayerAction } from "./actions.js";
-import { applyClaim, applyGame, applyJoin, applyRelease, linksForHost, view } from "./logic.js";
+import { applyClaim, applyGame, applyJoin, applyLeave, applyRelease, linksForHost, view } from "./logic.js";
 import { loadRoom, saveRoom } from "./store.js";
 
 const headers = {
@@ -39,6 +39,7 @@ export async function handleRequest(request, action) {
     if (action === "claim") result = applyClaim(room, { token: body.token, takeover: body.takeover === true });
     else if (action === "release") result = applyRelease(room, body.token);
     else if (action === "join") result = applyJoin(room, { token: headerToken || body.token, playerId: body.playerId });
+    else if (action === "leave") result = applyLeave(room, { token: headerToken || body.token });
     else if (action === "act") {
       result = applyPlayerAction(room, {
         token: headerToken,

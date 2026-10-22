@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { applyClaim, applyGame, applyJoin, applyRelease, emptyRoom, linksForHost, mergeRooms } from "./logic.js";
+import { applyClaim, applyGame, applyJoin, applyLeave, applyRelease, emptyRoom, linksForHost, mergeRooms } from "./logic.js";
 
 const room = emptyRoom();
 const claimed = applyClaim(room, { token: "banker", takeover: false });
@@ -46,6 +46,9 @@ assert.equal(both.room.seats.a.token, "phone-a");
 assert.equal(both.room.seats.b.token, "phone-b");
 const blocked = applyJoin(both.room, { token: "phone-c", playerId: "a" }, 2_000);
 assert.equal(blocked.status, 409);
+const left = applyLeave(both.room, { token: "phone-a" }, 2_000);
+assert.equal(left.room.seats.a, undefined);
+assert.equal(left.room.seats.b.token, "phone-b");
 
 const merged = mergeRooms(
   { ...emptyRoom(), revision: 2, seats: { a: { token: "phone-a", at: 5 } }, game: { startedAt: 1 } },

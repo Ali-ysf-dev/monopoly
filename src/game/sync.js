@@ -103,6 +103,10 @@ export function joinSeat(token, playerId) {
   return post("/api/join", token, { playerId });
 }
 
+export function leaveSeat(token) {
+  return post("/api/leave", token, {});
+}
+
 export function actAsPlayer(token, playerId, action, extra = {}) {
   return post("/api/act", token, { playerId, action, ...extra });
 }

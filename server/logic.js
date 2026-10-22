@@ -91,6 +91,20 @@ export function applyRelease(room, token) {
   };
 }
 
+export function applyLeave(room, { token }, now = Date.now()) {
+  if (!token || typeof token !== "string") return { error: "Missing token", status: 400 };
+  const seats = freshSeats(room, now);
+  let changed = false;
+  for (const [id, seat] of Object.entries(seats)) {
+    if (seat.token === token) {
+      delete seats[id];
+      changed = true;
+    }
+  }
+  if (!changed) return { room };
+  return { room: { ...room, seats, seatTouch: token }, changed: true };
+}
+
 export function applyJoin(room, { token, playerId }, now = Date.now()) {
   if (!token || typeof token !== "string") return { error: "Missing token", status: 400 };
   if (!room.game) return { error: "The banker has not started", status: 400 };

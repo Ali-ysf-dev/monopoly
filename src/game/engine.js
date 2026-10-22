@@ -786,6 +786,19 @@ export function bankrupt(state, playerId, creditorId) {
   return { tone: "out", text: `${player.name} went bankrupt. ${creditor.name} received the cash and deeds${interestText}.` };
 }
 
+export function renamePlayer(state, playerId, name) {
+  const player = mustPlayer(state, playerId);
+  const next = String(name || "").trim();
+  if (!next) throw new Error("Give this player a name");
+  if (next.length > 18) throw new Error("Keep names to 18 characters");
+  const taken = state.players.some((item) => item.id !== player.id && item.name.toLowerCase() === next.toLowerCase());
+  if (taken) throw new Error("Another player already has that name");
+  if (player.name === next) throw new Error("That is already their name");
+  const previous = player.name;
+  player.name = next;
+  return { tone: "move", text: `${previous} is now ${next}.` };
+}
+
 export function correctCash(state, playerId, nextAmount) {
   const amount = moneyIn(nextAmount);
   const player = mustPlayer(state, playerId);
@@ -894,6 +907,9 @@ export function createGame({ players, goSalary = 200, freeParking = false }) {
     const name = String(player.name || "").trim();
     if (!name) throw new Error("Give every player a name");
     if (name.length > 18) throw new Error("Keep names to 18 characters");
+    if (players.some((other) => other !== player && String(other.name || "").trim().toLowerCase() === name.toLowerCase())) {
+      throw new Error("Give each player a different name");
+    }
     if (player.cash < 0 || player.cash > 1_000_000) throw new Error("Starting cash must be between £0 and £1,000,000");
     if (!player.color || colors.has(player.color)) throw new Error("Give each player a different color");
     colors.add(player.color);

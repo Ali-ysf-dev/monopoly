@@ -1,6 +1,6 @@
 import os from "node:os";
 import { applyPlayerAction } from "./actions.js";
-import { applyClaim, applyGame, applyJoin, applyRelease, emptyRoom, linksForHost, view } from "./logic.js";
+import { applyClaim, applyGame, applyJoin, applyLeave, applyRelease, emptyRoom, linksForHost, view } from "./logic.js";
 
 function lanAddresses() {
   const found = [];
@@ -119,6 +119,21 @@ export function createRoom() {
           room = result.room;
           if (result.changed) publish();
           send(res, 200, { ok: true, ...answer(req, "") });
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/leave") {
+        const token = String(req.headers["x-banker-token"] || "");
+        await enqueue(async () => {
+          const result = applyLeave(room, { token });
+          if (result.error) {
+            send(res, result.status || 400, { error: result.error });
+            return;
+          }
+          room = result.room;
+          if (result.changed) publish();
+          send(res, 200, { ok: true, ...answer(req, token) });
         });
         return;
       }

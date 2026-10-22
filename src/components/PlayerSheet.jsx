@@ -1,22 +1,49 @@
 import { useState } from "react";
 import { GROUPED, buildingLabel, propName } from "../data/board.js";
 import { useGame } from "../context/GameContext.jsx";
-import { bankrupt, correctCash, playJailCard, portfolio } from "../game/engine.js";
+import { bankrupt, correctCash, playJailCard, portfolio, renamePlayer } from "../game/engine.js";
 import { formatMoney, parseMoney } from "../game/money.js";
-import { GoldButton, MoneyField, Sheet } from "./ui.jsx";
+import { Field, fieldClass, GoldButton, MoneyField, Sheet } from "./ui.jsx";
 
 export default function PlayerSheet({ playerId, onClose, onOpenDeed }) {
   const { state, act } = useGame();
   const player = state.players.find((item) => item.id === playerId);
   const [amount, setAmount] = useState("");
   const [creditor, setCreditor] = useState("bank");
+  const [name, setName] = useState(player?.name ?? "");
+  const [nameSource, setNameSource] = useState(player?.name ?? "");
+  const [nameError, setNameError] = useState("");
+  if ((player?.name ?? "") !== nameSource) {
+    setNameSource(player?.name ?? "");
+    setName(player?.name ?? "");
+  }
   if (!player) return null;
+
+  function saveName() {
+    const result = act((draft) => renamePlayer(draft, player.id, name));
+    setNameError(result.ok ? "" : result.error);
+  }
   const books = portfolio(state, player.id);
   const others = state.players.filter((item) => !item.bankrupt && item.id !== player.id);
   const parsed = parseMoney(amount);
 
   return (
     <Sheet title={player.name} kicker={player.bankrupt ? "Out of the game" : "Player"} onClose={onClose}>
+      <form
+        className="mb-4 flex items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          saveName();
+        }}
+      >
+        <div className="min-w-0 flex-1">
+          <Field label="Name">
+            <input className={fieldClass} maxLength={18} value={name} onChange={(event) => setName(event.target.value)} />
+          </Field>
+        </div>
+        <button type="submit" className="rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-ivory">Save</button>
+      </form>
+      {nameError && <p className="mb-3 text-sm text-rose-800">{nameError}</p>}
       <div className="flex items-end justify-between gap-3 border-b border-ink/10 pb-3">
         <div>
           <p className="text-sm text-ink/55">Cash</p>

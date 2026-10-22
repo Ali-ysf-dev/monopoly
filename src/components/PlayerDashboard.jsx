@@ -21,25 +21,18 @@ function useCashFlash(value) {
 export function PhoneLinks() {
   const { links, state } = useGame();
   const shown = withPlayerLinks(links);
-  const [copied, setCopied] = useState("");
+  const [copied, setCopied] = useState(false);
   if (!shown.length) return null;
+  const link = personalLink(shown[0]);
   const players = state?.players?.filter((player) => !player.bankrupt) ?? [];
-  const rows = players.length
-    ? players.map((player) => ({
-      key: player.id,
-      name: player.name,
-      color: player.color,
-      href: personalLink(shown[0], player.id),
-    }))
-    : [{ key: "table", name: "", color: "", href: personalLink(shown[0]) }];
 
-  async function copy(href) {
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(href);
-      setCopied(href);
-      setTimeout(() => setCopied(""), 1600);
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
     } catch {
-      setCopied("");
+      setCopied(false);
     }
   }
 
@@ -47,26 +40,22 @@ export function PhoneLinks() {
     <section className="mt-4 rounded-lg border border-ink/15 bg-white px-4 py-3">
       <h2 className="text-sm font-semibold text-ink">Player phones</h2>
       <p className="mt-1 text-sm leading-relaxed text-ink/70">
-        {players.length
-          ? "Each player opens their own link. Several phones can stay connected at once."
-          : "Players open this link, then tap their own name when the game starts."}
+        Every player opens this same link, then taps their own name.
       </p>
-      <ul className="mt-3 space-y-3">
-        {rows.map((row) => (
-          <li key={row.key}>
-            {row.name && (
-              <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: row.color }} />
-                {row.name}
-              </span>
-            )}
-            <p className="mt-1 break-all text-sm font-medium text-ink" data-testid={row.name ? `phone-link-${row.name}` : "phone-link"}>{row.href}</p>
-            <button type="button" onClick={() => copy(row.href)} className="mt-2 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
-              {copied === row.href ? "Copied" : "Copy link"}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <p className="mt-2 break-all text-sm font-medium text-ink" data-testid="phone-link">{link}</p>
+      <button type="button" onClick={copy} className="mt-3 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
+        {copied ? "Copied" : "Copy link"}
+      </button>
+      {players.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-2">
+          {players.map((player) => (
+            <li key={player.id} className="flex items-center gap-2 rounded-full border border-ink/10 px-3 py-1 text-sm text-ink">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: player.color }} />
+              {player.name}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -157,6 +146,33 @@ function OwnedDeed({ state, prop, deed, busy, onAct }) {
   );
 }
 
+function NameChoices({ players, taken, currentId, onChoose }) {
+  return (
+    <div className="space-y-2">
+      {players.map((player) => {
+        const selected = player.id === currentId;
+        const busy = taken.includes(player.id) && !selected;
+        return (
+          <button
+            key={player.id}
+            type="button"
+            data-testid={`join-${player.name}`}
+            aria-pressed={selected}
+            onClick={() => onChoose(player.id)}
+            className={`deed flex w-full items-center gap-3 rounded-lg px-4 py-4 text-left ${selected ? "ring-2 ring-ink" : ""}`}
+          >
+            <span className="h-4 w-4 rounded-full" style={{ background: player.color }} />
+            <span className="text-base font-semibold text-ink">{player.name}</span>
+            {selected && <span className="ml-auto text-sm text-ink/50">This phone</span>}
+            {!selected && busy && <span className="ml-auto text-sm text-ink/50">On a phone</span>}
+            {!selected && !busy && player.bankrupt && <span className="ml-auto text-sm text-ink/50">Out</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Picker({ players, taken, error, onChoose }) {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-4 py-8">
@@ -165,25 +181,8 @@ function Picker({ players, taken, error, onChoose }) {
         Tap your own name. Every player can join from their phone at the same time.
       </p>
       {error && <p className="mt-4 text-sm text-rose-800">{error}</p>}
-      <div className="mt-6 space-y-2">
-        {players.map((player) => {
-          const busy = taken.includes(player.id);
-          return (
-            <button
-              key={player.id}
-              type="button"
-              data-testid={`join-${player.name}`}
-              disabled={busy}
-              onClick={() => onChoose(player.id)}
-              className="deed flex w-full items-center gap-3 rounded-lg px-4 py-4 text-left disabled:opacity-50"
-            >
-              <span className="h-4 w-4 rounded-full" style={{ background: player.color }} />
-              <span className="text-base font-semibold text-ink">{player.name}</span>
-              {busy && <span className="ml-auto text-sm text-ink/50">On a phone</span>}
-              {!busy && player.bankrupt && <span className="ml-auto text-sm text-ink/50">Out</span>}
-            </button>
-          );
-        })}
+      <div className="mt-6">
+        <NameChoices players={players} taken={taken} currentId="" onChoose={onChoose} />
       </div>
     </main>
   );
@@ -257,9 +256,13 @@ export default function PlayerDashboard() {
           </h1>
         </div>
         <button type="button" onClick={clearPlayer} className="shrink-0 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm font-medium text-ink">
-          Not you?
+          Change
         </button>
       </header>
+      <div className="mt-4">
+        <NameChoices players={state.players} taken={taken} currentId={player.id} onChoose={choosePlayer} />
+      </div>
+      {joinError && <p className="mt-3 text-sm text-rose-800">{joinError}</p>}
 
       <p
         data-testid="dashboard-cash"

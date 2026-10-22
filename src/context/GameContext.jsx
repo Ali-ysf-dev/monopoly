@@ -9,7 +9,7 @@ import {
   deviceToken,
   fetchSession,
   joinSeat,
-  playerFromUrl,
+  leaveSeat,
   pushGame,
   releaseHost,
   rememberRevision,
@@ -28,7 +28,13 @@ export function GameProvider({ children }) {
   const [role, setRole] = useState("pending");
   const [links, setLinks] = useState([]);
   const [live, setLive] = useState(false);
-  const [followedId, setFollowedId] = useState(() => playerFromUrl() || localStorage.getItem(PLAYER_KEY) || "");
+  const [followedId, setFollowedId] = useState(() => {
+    try {
+      return localStorage.getItem(PLAYER_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const [taken, setTaken] = useState([]);
   const [joinError, setJoinError] = useState("");
   const [syncNonce, setSyncNonce] = useState(0);
@@ -41,7 +47,6 @@ export function GameProvider({ children }) {
   const revisionRef = useRef(-1);
   const adoptingRef = useRef(false);
   const followedRef = useRef(followedId);
-  const blockedRef = useRef("");
 
   useEffect(() => {
     roleRef.current = role;
@@ -137,13 +142,6 @@ export function GameProvider({ children }) {
     if (role !== "host" && role !== "player") return undefined;
     return subscribe((payload) => {
       if (Array.isArray(payload.taken)) setTaken(payload.taken);
-      const requested = playerFromUrl();
-      const blocked = blockedRef.current;
-      if (requested && requested !== blocked) {
-        if (requested !== followedRef.current) setFollowedId(requested);
-      } else if (!followedRef.current && payload.mine && payload.mine !== blocked) {
-        setFollowedId(payload.mine);
-      }
 
       if (roleRef.current === "host") {
         const remoteRev = payload.revision || 0;
@@ -240,8 +238,11 @@ export function GameProvider({ children }) {
         if (!stop) setJoinError("");
       } catch (error) {
         if (stop || error.status !== 409) return;
-        blockedRef.current = followedId;
-        localStorage.removeItem(PLAYER_KEY);
+        try {
+          localStorage.removeItem(PLAYER_KEY);
+        } catch {
+          // The chooser still opens if storage is blocked.
+        }
         setFollowedId("");
         setJoinError(error.message);
       }
@@ -255,15 +256,23 @@ export function GameProvider({ children }) {
   }, [role, followedId]);
 
   const choosePlayer = useCallback((id) => {
-    blockedRef.current = "";
     setJoinError("");
-    localStorage.setItem(PLAYER_KEY, id);
+    try {
+      localStorage.setItem(PLAYER_KEY, id);
+    } catch {
+      // A private phone can still play for this visit.
+    }
     setFollowedId(id);
   }, []);
 
   const clearPlayer = useCallback(() => {
-    localStorage.removeItem(PLAYER_KEY);
+    try {
+      localStorage.removeItem(PLAYER_KEY);
+    } catch {
+      // The chooser still opens if storage is blocked.
+    }
     setFollowedId("");
+    leaveSeat(tokenRef.current).catch(() => {});
   }, []);
 
   const watchAsPlayer = useCallback(async () => {
